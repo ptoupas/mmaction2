@@ -425,7 +425,7 @@ def parse_hmdb51_split(level):
     def generate_class_index_file():
         """This function will generate a `ClassInd.txt` for HMDB51 in a format
         like UCF101, where class id starts with 1."""
-        frame_path = 'data/hmdb51/rawframes'
+        frame_path = 'data/hmdb51/videos'
         annotation_dir = 'data/hmdb51/annotations'
 
         class_list = sorted(os.listdir(frame_path))

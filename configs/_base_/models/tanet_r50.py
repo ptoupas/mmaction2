@@ -6,14 +6,15 @@ model = dict(
         pretrained='torchvision://resnet50',
         depth=50,
         num_segments=8,
+        frozen_stages = 3,
         tam_cfg=dict()),
     cls_head=dict(
         type='TSMHead',
-        num_classes=400,
+        num_classes=51,
         in_channels=2048,
         spatial_type='avg',
         consensus=dict(type='AvgConsensus', dim=1),
-        dropout_ratio=0.5,
+        dropout_ratio=0.7,
         init_std=0.001),
     # model training and testing settings
     train_cfg=None,

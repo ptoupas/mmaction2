@@ -471,6 +471,8 @@ class X3D(nn.Module):
             m.eval()
             for param in m.parameters():
                 param.requires_grad = False
+        # for n, p in self.named_parameters():
+        #     print(n, p.requires_grad)
 
     def init_weights(self):
         """Initiate the parameters either from existing checkpoint or from

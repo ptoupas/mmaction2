@@ -564,6 +564,8 @@ class ResNet(nn.Module):
             m.eval()
             for param in m.parameters():
                 param.requires_grad = False
+        # for n, p in self.named_parameters():
+        #     print(n, p.requires_grad)
 
     def _partial_bn(self):
         logger = get_root_logger()
