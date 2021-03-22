@@ -80,7 +80,7 @@ def parse_directory(path,
     return frame_dict
 
 
-def parse_ucf101_splits(level):
+def parse_ucf101_splits(level, data_path='data/'):
     """Parse UCF-101 dataset into "train", "val", "test" splits.
 
     Args:
@@ -90,9 +90,9 @@ def parse_ucf101_splits(level):
     Returns:
         list: "train", "val", "test" splits of UCF-101.
     """
-    class_index_file = 'data/ucf101/annotations/classInd.txt'
-    train_file_template = 'data/ucf101/annotations/trainlist{:02d}.txt'
-    test_file_template = 'data/ucf101/annotations/testlist{:02d}.txt'
+    class_index_file = data_path + 'ucf101/annotations/classInd.txt'
+    train_file_template = data_path + 'ucf101/annotations/trainlist{:02d}.txt'
+    test_file_template = data_path + 'ucf101/annotations/testlist{:02d}.txt'
 
     with open(class_index_file, 'r') as fin:
         class_index = [x.strip().split() for x in fin]
@@ -131,7 +131,7 @@ def parse_ucf101_splits(level):
     return splits
 
 
-def parse_jester_splits(level):
+def parse_jester_splits(level, data_path='data/'):
     """Parse Jester into "train", "val" splits.
 
     Args:
@@ -142,10 +142,10 @@ def parse_jester_splits(level):
         list: "train", "val", "test" splits of Jester dataset.
     """
     # Read the annotations
-    class_index_file = 'data/jester/annotations/jester-v1-labels.csv'
-    train_file = 'data/jester/annotations/jester-v1-train.csv'
-    val_file = 'data/jester/annotations/jester-v1-validation.csv'
-    test_file = 'data/jester/annotations/jester-v1-test.csv'
+    class_index_file = data_path + 'jester/annotations/jester-v1-labels.csv'
+    train_file = data_path + 'jester/annotations/jester-v1-train.csv'
+    val_file = data_path + 'jester/annotations/jester-v1-validation.csv'
+    test_file = data_path + 'jester/annotations/jester-v1-test.csv'
 
     with open(class_index_file, 'r') as fin:
         class_index = [x.strip() for x in fin]
@@ -178,7 +178,7 @@ def parse_jester_splits(level):
     return splits
 
 
-def parse_sthv1_splits(level):
+def parse_sthv1_splits(level, data_path='data/'):
     """Parse Something-Something dataset V1 into "train", "val" splits.
 
     Args:
@@ -190,11 +190,11 @@ def parse_sthv1_splits(level):
     """
     # Read the annotations
     # yapf: disable
-    class_index_file = 'data/sthv1/annotations/something-something-v1-labels.csv'  # noqa
+    class_index_file = data_path + 'sthv1/annotations/something-something-v1-labels.csv'  # noqa
     # yapf: enable
-    train_file = 'data/sthv1/annotations/something-something-v1-train.csv'
-    val_file = 'data/sthv1/annotations/something-something-v1-validation.csv'
-    test_file = 'data/sthv1/annotations/something-something-v1-test.csv'
+    train_file = data_path + 'sthv1/annotations/something-something-v1-train.csv'
+    val_file = data_path + 'sthv1/annotations/something-something-v1-validation.csv'
+    test_file = data_path + 'sthv1/annotations/something-something-v1-test.csv'
 
     with open(class_index_file, 'r') as fin:
         class_index = [x.strip() for x in fin]
@@ -227,7 +227,7 @@ def parse_sthv1_splits(level):
     return splits
 
 
-def parse_sthv2_splits(level):
+def parse_sthv2_splits(level, data_path='data/'):
     """Parse Something-Something dataset V2 into "train", "val" splits.
 
     Args:
@@ -239,11 +239,11 @@ def parse_sthv2_splits(level):
     """
     # Read the annotations
     # yapf: disable
-    class_index_file = 'data/sthv2/annotations/something-something-v2-labels.json'  # noqa
+    class_index_file = data_path + 'sthv2/annotations/something-something-v2-labels.json'  # noqa
     # yapf: enable
-    train_file = 'data/sthv2/annotations/something-something-v2-train.json'
-    val_file = 'data/sthv2/annotations/something-something-v2-validation.json'
-    test_file = 'data/sthv2/annotations/something-something-v2-test.json'
+    train_file = data_path + 'sthv2/annotations/something-something-v2-train.json'
+    val_file = data_path + 'sthv2/annotations/something-something-v2-validation.json'
+    test_file = data_path + 'sthv2/annotations/something-something-v2-test.json'
 
     with open(class_index_file, 'r') as fin:
         class_mapping = json.loads(fin.read())
@@ -279,7 +279,7 @@ def parse_sthv2_splits(level):
     return splits
 
 
-def parse_mmit_splits():
+def parse_mmit_splits(data_path='data/'):
     """Parse Multi-Moments in Time dataset into "train", "val" splits.
 
     Returns:
@@ -292,10 +292,10 @@ def parse_mmit_splits():
         labels = [int(digit) for digit in x[1:]]
         return video, labels
 
-    csv_reader = csv.reader(open('data/mmit/annotations/trainingSet.csv'))
+    csv_reader = csv.reader(open(data_path + 'mmit/annotations/trainingSet.csv'))
     train_list = [line_to_map(x) for x in csv_reader]
 
-    csv_reader = csv.reader(open('data/mmit/annotations/validationSet.csv'))
+    csv_reader = csv.reader(open(data_path + 'mmit/annotations/validationSet.csv'))
     val_list = [line_to_map(x) for x in csv_reader]
 
     test_list = val_list  # not test for mit
@@ -304,7 +304,7 @@ def parse_mmit_splits():
     return splits
 
 
-def parse_kinetics_splits(level, dataset):
+def parse_kinetics_splits(level, dataset, data_path='data/'):
     """Parse Kinetics dataset into "train", "val", "test" splits.
 
     Args:
@@ -360,9 +360,9 @@ def parse_kinetics_splits(level, dataset):
             label = class_mapping[convert_label(x[0])]
             return video, label
 
-    train_file = f'data/{dataset}/annotations/kinetics_train.csv'
-    val_file = f'data/{dataset}/annotations/kinetics_val.csv'
-    test_file = f'data/{dataset}/annotations/kinetics_test.csv'
+    train_file = fdata_path + '{dataset}/annotations/kinetics_train.csv'
+    val_file = fdata_path + '{dataset}/annotations/kinetics_val.csv'
+    test_file = fdata_path + '{dataset}/annotations/kinetics_test.csv'
 
     csv_reader = csv.reader(open(train_file))
     # skip the first line
@@ -387,7 +387,7 @@ def parse_kinetics_splits(level, dataset):
     return splits
 
 
-def parse_mit_splits():
+def parse_mit_splits(data_path='data/'):
     """Parse Moments in Time dataset into "train", "val" splits.
 
     Returns:
@@ -395,7 +395,7 @@ def parse_mit_splits():
     """
     # Read the annotations
     class_mapping = {}
-    with open('data/mit/annotations/moments_categories.txt') as f_cat:
+    with open(data_path + 'mit/annotations/moments_categories.txt') as f_cat:
         for line in f_cat.readlines():
             cat, digit = line.rstrip().split(',')
             class_mapping[cat] = int(digit)
@@ -405,10 +405,10 @@ def parse_mit_splits():
         label = class_mapping[osp.dirname(x[0])]
         return video, label
 
-    csv_reader = csv.reader(open('data/mit/annotations/trainingSet.csv'))
+    csv_reader = csv.reader(open(data_path + 'mit/annotations/trainingSet.csv'))
     train_list = [line_to_map(x) for x in csv_reader]
 
-    csv_reader = csv.reader(open('data/mit/annotations/validationSet.csv'))
+    csv_reader = csv.reader(open(data_path + 'mit/annotations/validationSet.csv'))
     val_list = [line_to_map(x) for x in csv_reader]
 
     test_list = val_list  # no test for mit
@@ -417,16 +417,16 @@ def parse_mit_splits():
     return splits
 
 
-def parse_hmdb51_split(level):
-    train_file_template = 'data/hmdb51/annotations/trainlist{:02d}.txt'
-    test_file_template = 'data/hmdb51/annotations/testlist{:02d}.txt'
-    class_index_file = 'data/hmdb51/annotations/classInd.txt'
+def parse_hmdb51_split(level, data_path='data/'):
+    train_file_template = data_path + 'hmdb51/annotations/trainlist{:02d}.txt'
+    test_file_template = data_path + 'hmdb51/annotations/testlist{:02d}.txt'
+    class_index_file = data_path + 'hmdb51/annotations/classInd.txt'
 
     def generate_class_index_file():
         """This function will generate a `ClassInd.txt` for HMDB51 in a format
         like UCF101, where class id starts with 1."""
-        frame_path = 'data/hmdb51/videos'
-        annotation_dir = 'data/hmdb51/annotations'
+        frame_path = data_path + 'hmdb51/videos'
+        annotation_dir = data_path + 'hmdb51/annotations'
 
         class_list = sorted(os.listdir(frame_path))
         class_dict = dict()

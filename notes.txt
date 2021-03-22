@@ -1,0 +1,22 @@
+create paths and dataset to another folder:
+python tools/data/build_file_list.py hmdb51 /home/petros/Datasets/hmdb51/videos/ --level 2 --format videos --shuffle --out-root-path /home/petros/Datasets/
+
+train:
+python tools/train.py configs/recognition/x3d/x3d_m_16x5x1_facebook_kinetics400_rgb.py --validate
+
+Get Flops and Params:
+3D
+python tools/analysis/get_flops.py configs/recognition/x3d/x3d_m_16x5x1_facebook_kinetics400_rgb.py --shape 1 3 16 224 224
+2D
+python tools/analysis/get_flops.py configs/recognition/tsm/tsm_r50_1x1x8_50e_kinetics400_rgb.py --shape 8 3 224 224
+
+Benchmark Model:
+python tools/analysis/benchmark.py configs/recognition/x3d/x3d_m_16x5x1_facebook_kinetics400_rgb.py
+
+Test Mode:
+    dict(
+        type='SampleFrames',    -> Type of sampling method
+        clip_len=16,            -> Number of frames to get from current clip (applies to each clip from num_clips=...)
+        frame_interval=5,       -> Interval between frames in current clip  (applies to each clip from num_clips=...)
+        num_clips=1,            -> Number of clips to segment the original full clip
+        test_mode=True),

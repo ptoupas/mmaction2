@@ -11,11 +11,14 @@ def cal_train_time(log_dicts, args):
     for i, log_dict in enumerate(log_dicts):
         print(f'{"-" * 5}Analyze train time of {args.json_logs[i]}{"-" * 5}')
         all_times = []
+        all_memory = []
         for epoch in log_dict.keys():
             if args.include_outliers:
                 all_times.append(log_dict[epoch]['time'])
+                all_memory.append(log_dict[epoch]['memory'])
             else:
                 all_times.append(log_dict[epoch]['time'][1:])
+                all_memory.append(log_dict[epoch]['memory'][1:])
         all_times = np.array(all_times)
         epoch_ave_time = all_times.mean(-1)
         slowest_epoch = epoch_ave_time.argmax()
@@ -28,7 +31,18 @@ def cal_train_time(log_dicts, args):
         print(f'time std over epochs is {std_over_epoch:.4f}')
         print(f'average iter time: {np.mean(all_times):.4f} s/iter')
         print()
-
+        all_memory = np.array(all_memory)
+        epoch_ave_mem = all_memory.mean(-1)
+        costliest_epoch = epoch_ave_mem.argmax()
+        cheapest_epoch = epoch_ave_mem.argmin()
+        std_over_epoch = epoch_ave_mem.std()
+        print(f'costliest epoch {costliest_epoch + 1}, '
+              f'average memory is {epoch_ave_mem[costliest_epoch]:.4f} MBs')
+        print(f'cheapest epoch {cheapest_epoch + 1}, '
+              f'average memory is {epoch_ave_mem[cheapest_epoch]:.4f} MBs')
+        print(f'memory std over epochs is {std_over_epoch:.4f}')
+        print(f'average iter memory: {np.mean(all_memory):.4f} MBs/iter')
+        print()
 
 def plot_curve(log_dicts, args):
     if args.backend is not None:

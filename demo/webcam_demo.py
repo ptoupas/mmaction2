@@ -13,10 +13,10 @@ from mmaction.datasets.pipelines import Compose
 
 FONTFACE = cv2.FONT_HERSHEY_COMPLEX_SMALL
 FONTSCALE = 1
-FONTCOLOR = (255, 255, 255)  # BGR, white
-MSGCOLOR = (128, 128, 128)  # BGR, gray
-THICKNESS = 1
-LINETYPE = 1
+FONTCOLOR = (0, 0, 255)  # BGR, white
+MSGCOLOR = (255, 0, 0)  # BGR, gray
+THICKNESS = 2
+LINETYPE = 2
 
 EXCLUED_STEPS = [
     'OpenCVInit', 'OpenCVDecode', 'DecordInit', 'DecordDecode', 'PyAVInit',
@@ -75,7 +75,7 @@ def show_results():
                             FONTCOLOR, THICKNESS, LINETYPE)
 
         else:
-            cv2.putText(frame, msg, (0, 40), FONTFACE, FONTSCALE, MSGCOLOR,
+            cv2.putText(frame, msg, (0, 80), FONTFACE, FONTSCALE, MSGCOLOR,
                         THICKNESS, LINETYPE)
 
         cv2.imshow('camera', frame)

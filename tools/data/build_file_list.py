@@ -190,21 +190,21 @@ def main():
         raise NotImplementedError('only rawframes and videos are supported')
 
     if args.dataset == 'ucf101':
-        splits = parse_ucf101_splits(args.level)
+        splits = parse_ucf101_splits(args.level, args.out_root_path)
     elif args.dataset == 'sthv1':
-        splits = parse_sthv1_splits(args.level)
+        splits = parse_sthv1_splits(args.level, args.out_root_path)
     elif args.dataset == 'sthv2':
-        splits = parse_sthv2_splits(args.level)
+        splits = parse_sthv2_splits(args.level, args.out_root_path)
     elif args.dataset == 'mit':
-        splits = parse_mit_splits()
+        splits = parse_mit_splits(args.out_root_path)
     elif args.dataset == 'mmit':
-        splits = parse_mmit_splits()
+        splits = parse_mmit_splits(args.out_root_path)
     elif args.dataset in ['kinetics400', 'kinetics600', 'kinetics700']:
-        splits = parse_kinetics_splits(args.level, args.dataset)
+        splits = parse_kinetics_splits(args.level, args.dataset, args.out_root_path)
     elif args.dataset == 'hmdb51':
-        splits = parse_hmdb51_split(args.level)
+        splits = parse_hmdb51_split(args.level, args.out_root_path)
     elif args.dataset == 'jester':
-        splits = parse_jester_splits(args.level)
+        splits = parse_jester_splits(args.level, args.out_root_path)
     else:
         raise ValueError(
             f"Supported datasets are 'ucf101, sthv1, sthv2', 'jester', "

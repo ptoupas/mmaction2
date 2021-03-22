@@ -3,6 +3,7 @@
 set -e
 
 DATA_DIR="../../../data/hmdb51/annotations"
+# DATA_DIR="/home/petros/Datasets/hmdb51/annotations"
 
 if [[ ! -d "${DATA_DIR}" ]]; then
   echo "${DATA_DIR} does not exist. Creating";
