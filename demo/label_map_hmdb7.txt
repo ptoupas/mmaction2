@@ -1,0 +1,7 @@
+answer phone
+drink
+eat
+lie down
+sit
+stand
+walk

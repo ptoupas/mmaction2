@@ -2,11 +2,16 @@ _base_ = ['../../_base_/models/x3d.py']
 
 # dataset settings
 dataset_type = 'VideoDataset'
-data_root = '/home/petros/Datasets/hmdb51/videos'
-data_root_val = '/home/petros/Datasets/hmdb51/videos'
-ann_file_train = '/home/petros/Datasets/hmdb51/hmdb51_train_split_1_videos.txt'
-ann_file_val = '/home/petros/Datasets/hmdb51/hmdb51_val_split_1_videos.txt'
-ann_file_test = '/home/petros/Datasets/hmdb51/hmdb51_val_split_1_videos.txt'
+# data_root = '/home/petros/Datasets/hmdb51/videos'
+# data_root_val = '/home/petros/Datasets/hmdb51/videos'
+# ann_file_train = '/home/petros/Datasets/hmdb51/hmdb51_train_split_1_videos.txt'
+# ann_file_val = '/home/petros/Datasets/hmdb51/hmdb51_val_split_1_videos.txt'
+# ann_file_test = '/home/petros/Datasets/hmdb51/hmdb51_val_split_1_videos.txt'
+data_root = '/home/petros/Datasets/certhbot_har/videos'
+data_root_val = '/home/petros/Datasets/certhbot_har/videos'
+ann_file_train = '/home/petros/Datasets/certhbot_har/certhbot_har_train_split1.txt'
+ann_file_val = '/home/petros/Datasets/certhbot_har/certhbot_har_val_split1.txt'
+ann_file_test = '/home/petros/Datasets/certhbot_har/certhbot_har_val_split1.txt'
 
 # dataset_type = 'RawframeDataset'
 # data_root = 'data/hmdb51/rawframes'
@@ -26,9 +31,10 @@ train_pipeline = [
         dict(
         type='MultiScaleCrop',
         input_size=224,
-        scales=(1, 0.8),
+        scales=(1, 0.875, 0.75),
         random_crop=False,
         max_wh_scale_gap=0),
+    dict(type='ColorJitter', color_space_aug=True),
     dict(type='Resize', scale=(224, 224)),
     dict(type='Flip', flip_ratio=0.5),
     dict(type='Normalize', **img_norm_cfg),
@@ -49,7 +55,7 @@ val_pipeline = [
     dict(type='DecordDecode'),
     # dict(type='PyAVDecode'),
     dict(type='Resize', scale=(-1, 256)),
-    dict(type='CenterCrop', crop_size=256),
+    dict(type='CenterCrop', crop_size=224),
     dict(type='Flip', flip_ratio=0),
     dict(type='Normalize', **img_norm_cfg),
     dict(type='FormatShape', input_format='NCTHW'),
@@ -94,22 +100,24 @@ data = dict(
         pipeline=test_pipeline))
 # optimizer
 optimizer = dict(
-    type='SGD', lr=0.004, momentum=0.9,
+    type='SGD', lr=0.005, momentum=0.9,
     weight_decay=0.0005)  # this lr is used for 8 gpus
 optimizer_config = dict(grad_clip=dict(max_norm=40, norm_type=2))
 # learning policy
-# lr_config = dict(policy='step',
-#                  warmup='linear',
-#                  warmup_by_epoch=True,
-#                  warmup_iters=5,
-#                  warmup_ratio=0.25,
-#                  step=[15, 25])
-lr_config = dict(policy='CosineAnnealing', # https://github.com/open-mmlab/mmcv/blob/master/mmcv/runner/hooks/lr_updater.py#L9
+lr_config = dict(policy='step',
                  warmup='linear',
                  warmup_by_epoch=True,
                  warmup_iters=5,
                  warmup_ratio=0.25,
-                 min_lr=0)
+                 step=[20])
+# lr_config = dict(policy='CosineRestart', # https://github.com/open-mmlab/mmcv/blob/master/mmcv/runner/hooks/lr_updater.py#L9
+#                  warmup='linear',
+#                  warmup_by_epoch=True,
+#                  warmup_iters=5,
+#                  warmup_ratio=0.25,
+#                  min_lr=0,
+#                  periods=[10, 20],
+#                  restart_weights=[1, 1])
 total_epochs = 30
 checkpoint_config = dict(interval=5)
 evaluation = dict(
@@ -123,11 +131,13 @@ log_config = dict(
 
 # fp16 setting
 # fp16 = dict()
+# precise batchnormalization setting
+# precise_bn = dict()
 
 # runtime settings
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
-work_dir = './work_dirs/x3d_m_16x5x1_facebook_hmdb51_rgb/'
+work_dir = './work_dirs/x3d_m_16x5x1_facebook_hmdb7_rgb_cos_rest/'
 workflow = [('train', 1)]
 # use the pre-trained model for the whole X3D-M network
 load_from = 'checkpoints/x3d/x3d_m_facebook_16x5x1_kinetics400_rgb_20201027-3f42382a.pth'
