@@ -89,7 +89,7 @@ class RawframeDataset(BaseDataset):
                  pipeline,
                  data_prefix=None,
                  test_mode=False,
-                 filename_tmpl='img_{:05}.jpg',
+                 filename_tmpl='img_{:06}.jpg',
                  with_offset=False,
                  multi_class=False,
                  num_classes=None,

@@ -1149,6 +1149,10 @@ class RawFrameDecode:
             else:
                 raise NotImplementedError
 
+        # import cv2
+        # for im in imgs:
+        #     cv2.imshow('test', cv2.cvtColor(im, cv2.COLOR_BGR2RGB))
+        #     cv2.waitKey(0)
         results['imgs'] = imgs
         results['original_shape'] = imgs[0].shape[:2]
         results['img_shape'] = imgs[0].shape[:2]

@@ -3,6 +3,7 @@ model = dict(
     type='Recognizer2D',
     backbone=dict(
         type='MobileNetV2TSM',
+        frozen_stages = 0,
         shift_div=8,
         num_segments=8,
         is_shift=True,

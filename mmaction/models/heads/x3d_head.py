@@ -24,11 +24,12 @@ class X3DHead(BaseHead):
                  num_classes,
                  in_channels,
                  loss_cls=dict(type='CrossEntropyLoss'),
+                 multi_class=False,
                  spatial_type='avg',
                  dropout_ratio=0.5,
                  init_std=0.01,
                  fc1_bias=False):
-        super().__init__(num_classes, in_channels, loss_cls)
+        super().__init__(num_classes, in_channels, loss_cls, multi_class)
 
         self.spatial_type = spatial_type
         self.dropout_ratio = dropout_ratio

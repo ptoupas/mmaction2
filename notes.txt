@@ -1,8 +1,15 @@
+create certhbot har dataset annotations
+python tools/data/certhbot_har/annotations.py /home/active/ptoupas/data/ /home/active/ptoupas/data/ --format videos --test_split_percentage 0.15
+
 create paths and dataset to another folder:
-python tools/data/build_file_list.py hmdb51 /home/petros/Datasets/hmdb51/videos/ --level 2 --format videos --shuffle --out-root-path /home/petros/Datasets/
+python tools/data/build_file_list.py hmdb51 /home/petros/Datasets/hmdb51/videos/ --level 2 --format videos --num-split 1 --subset train --shuffle --out-root-path /home/petros/Datasets/
+or
+python tools/data/build_file_list.py kinetics700_2020 /home/active/ptoupas/external_hdd/Kinetics_700/kinetics700_2020/videos_val/ --level 2 --format videos --num-split 1 --subset val --shuffle --out-root-path /home/active/ptoupas/external_hdd/Kinetics_700
 
 train:
 python tools/train.py configs/recognition/x3d/x3d_m_16x5x1_facebook_kinetics400_rgb.py --validate
+train on multiple GPUSs:
+./tools/dist_train.sh configs/recognition/x3d/x3d_m_16x5x1_facebook_hmdb51_rgb.py 2 --validate
 
 Get Flops and Params:
 3D

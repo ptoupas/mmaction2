@@ -77,7 +77,8 @@ class BaseDataset(Dataset, metaclass=ABCMeta):
         self.modality = modality
         self.sample_by_class = sample_by_class
         self.power = power
-        assert not (self.multi_class and self.sample_by_class)
+        # assert not (self.multi_class and self.sample_by_class)
+        assert not (self.sample_by_class)
 
         self.pipeline = Compose(pipeline)
         self.video_infos = self.load_annotations()

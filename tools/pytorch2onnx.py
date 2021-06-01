@@ -71,7 +71,8 @@ def pytorch2onnx(model,
         export_params=True,
         keep_initializers_as_inputs=True,
         verbose=show,
-        opset_version=opset_version)
+        opset_version=opset_version,
+        training=0)
 
     print(f'Successfully exported ONNX model: {output_file}')
     if verify:
