@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 
 DATASET=$1
-if [ "$DATASET" == "kinetics400" ] || [ "$1" == "kinetics600" ] || [ "$1" == "kinetics700" ]; then
+if [ "$DATASET" == "kinetics400" ] || [ "$1" == "kinetics600" ] || [ "$1" == "kinetics700" ] || [ "$1" == "kinetics700_2020" ]; then
         echo "We are processing $DATASET"
 else
-        echo "Bad Argument, we only support kinetics400, kinetics600 or kinetics700"
+        echo "Bad Argument, we only support kinetics400, kinetics600 or kinetics700 or kinetics700_2020"
         exit 0
 fi
 

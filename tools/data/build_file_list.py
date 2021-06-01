@@ -20,8 +20,8 @@ def parse_args():
         'dataset',
         type=str,
         choices=[
-            'ucf101', 'kinetics400', 'kinetics600', 'kinetics700', 'thumos14',
-            'sthv1', 'sthv2', 'mit', 'mmit', 'activitynet', 'hmdb51', 'jester'
+            'ucf101', 'kinetics400', 'kinetics600', 'kinetics700', 'kinetics700_2020',
+            'thumos14', 'sthv1', 'sthv2', 'mit', 'mmit', 'activitynet', 'hmdb51', 'jester'
         ],
         help='dataset to be built file list')
     parser.add_argument(
@@ -199,7 +199,7 @@ def main():
         splits = parse_mit_splits(args.out_root_path)
     elif args.dataset == 'mmit':
         splits = parse_mmit_splits(args.out_root_path)
-    elif args.dataset in ['kinetics400', 'kinetics600', 'kinetics700']:
+    elif args.dataset in ['kinetics400', 'kinetics600', 'kinetics700', 'kinetics700_2020']:
         splits = parse_kinetics_splits(args.level, args.dataset, args.out_root_path)
     elif args.dataset == 'hmdb51':
         splits = parse_hmdb51_split(args.level, args.out_root_path)
@@ -208,12 +208,12 @@ def main():
     else:
         raise ValueError(
             f"Supported datasets are 'ucf101, sthv1, sthv2', 'jester', "
-            f"'mmit', 'mit', 'kinetics400', 'kinetics600', 'kinetics700', but "
+            f"'mmit', 'mit', 'kinetics400', 'kinetics600', 'kinetics700', 'kinetics700_2020', but "
             f'got {args.dataset}')
 
     assert len(splits) == args.num_split
 
-    out_path = args.out_root_path + args.dataset
+    out_path = args.out_root_path + '/' + args.dataset
 
     if len(splits) > 1:
         for i, split in enumerate(splits):

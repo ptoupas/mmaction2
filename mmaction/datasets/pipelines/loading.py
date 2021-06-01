@@ -751,6 +751,8 @@ class PyAVInit:
         container = av.open(file_obj)
 
         results['video_reader'] = container
+        if len(container.streams.video) == 0:
+            return None
         results['total_frames'] = container.streams.video[0].frames
 
         return results
@@ -934,7 +936,13 @@ class DecordInit:
             self.file_client = FileClient(self.io_backend, **self.kwargs)
 
         file_obj = io.BytesIO(self.file_client.get(results['filename']))
-        container = decord.VideoReader(file_obj, num_threads=self.num_threads)
+        try:
+            container = decord.VideoReader(file_obj, num_threads=self.num_threads)
+        except Exception as e:
+            container = None
+        if container is None:
+            return None
+            
         results['video_reader'] = container
         results['total_frames'] = len(container)
         return results

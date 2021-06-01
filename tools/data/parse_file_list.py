@@ -347,8 +347,8 @@ def parse_kinetics_splits(level, dataset, data_path='data/'):
                 label is the video label.
         """
         if test:
-            # video = f'{x[0]}_{int(x[1]):06d}_{int(x[2]):06d}'
-            video = f'{x[1]}_{int(float(x[2])):06d}_{int(float(x[3])):06d}'
+            video = f'{x[0]}_{int(x[1]):06d}_{int(x[2]):06d}'
+            # video = f'{x[1]}_{int(float(x[2])):06d}_{int(float(x[3])):06d}'
             label = -1  # label unknown
             return video, label
         else:
@@ -360,9 +360,9 @@ def parse_kinetics_splits(level, dataset, data_path='data/'):
             label = class_mapping[convert_label(x[0])]
             return video, label
 
-    train_file = fdata_path + '{dataset}/annotations/kinetics_train.csv'
-    val_file = fdata_path + '{dataset}/annotations/kinetics_val.csv'
-    test_file = fdata_path + '{dataset}/annotations/kinetics_test.csv'
+    train_file = data_path + '/' + dataset + '/annotations/kinetics_train.csv'
+    val_file = data_path + '/' + dataset + '/annotations/kinetics_val.csv'
+    test_file = data_path + '/' + dataset + '/annotations/kinetics_test.csv'
 
     csv_reader = csv.reader(open(train_file))
     # skip the first line

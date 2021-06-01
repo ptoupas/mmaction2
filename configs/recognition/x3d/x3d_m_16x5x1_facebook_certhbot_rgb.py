@@ -2,22 +2,19 @@ _base_ = ['../../_base_/models/x3d.py']
 
 # dataset settings
 dataset_type = 'VideoDataset'
-# data_root = '/home/petros/Datasets/hmdb51/videos'
-# data_root_val = '/home/petros/Datasets/hmdb51/videos'
-# ann_file_train = '/home/petros/Datasets/hmdb51/hmdb51_train_split_1_videos.txt'
-# ann_file_val = '/home/petros/Datasets/hmdb51/hmdb51_val_split_1_videos.txt'
-# ann_file_test = '/home/petros/Datasets/hmdb51/hmdb51_val_split_1_videos.txt'
-data_root = '/home/ptoupas/Development/data/certhbot_har/videos'
-data_root_val = '/home/ptoupas/Development/data/certhbot_har/videos'
-ann_file_train = '/home/ptoupas/Development/data/certhbot_har/certhbot_har_train_split1.txt'
-ann_file_val = '/home/ptoupas/Development/data/certhbot_har/certhbot_har_val_split1.txt'
-ann_file_test = '/home/ptoupas/Development/data/certhbot_har/certhbot_har_val_split1.txt'
+
+data_root = '/second_ext4/ptoupas/data/certhbot_har/videos'
+data_root_val = '/second_ext4/ptoupas/data/certhbot_har/videos'
+ann_file_train = '/second_ext4/ptoupas/data/certhbot_har/certhbot_har_train_split1_videos.txt'
+ann_file_val = '/second_ext4/ptoupas/data/certhbot_har/certhbot_har_val_split1_videos.txt'
+ann_file_test = '/second_ext4/ptoupas/data/certhbot_har/certhbot_har_val_split1_videos.txt'
 
 # dataset_type = 'RawframeDataset'
 # data_root = 'data/hmdb51/rawframes'
 # data_root_val = 'data/hmdb51/rawframes'
 # ann_file_train = 'data/hmdb51/hmdb51_train_split_1_rawframes.txt'
 # ann_file_val = 'data/hmdb51/hmdb51_val_split_1_rawframes.txt'
+
 img_norm_cfg = dict(
     mean=[114.75, 114.75, 114.75], std=[57.38, 57.38, 57.38], to_bgr=False)
 train_pipeline = [
@@ -82,7 +79,7 @@ test_pipeline = [
 ]
 
 data = dict(
-    videos_per_gpu=16,
+    videos_per_gpu=32,
     workers_per_gpu=4,
     train=dict(
         type=dataset_type,
@@ -125,7 +122,7 @@ lr_config = dict(policy='CosineAnnealing',
 #                  min_lr=0,
 #                  periods=[10, 20],
 #                  restart_weights=[1, 1])
-total_epochs = 100
+total_epochs = 60
 checkpoint_config = dict(interval=5)
 evaluation = dict(
     interval=1, metrics=['top_k_accuracy', 'mean_class_accuracy'])
@@ -144,10 +141,10 @@ log_config = dict(
 # runtime settings
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
-work_dir = './work_dirs/x3d_m_16x5x1_facebook_hmdb7_rgb_step_v9/'
+work_dir = './work_dirs/x3d_m_16x5x1_facebook_certhbot_rgb_v2/'
 workflow = [('train', 1)]
 # use the pre-trained model for the whole X3D-M network
 load_from = 'checkpoints/x3d/x3d_m_facebook_16x5x1_kinetics400_rgb_20201027-3f42382a.pth'
 resume_from = None
 # set this True for multi-GPU training
-find_unused_parameters=True
+find_unused_parameters=False

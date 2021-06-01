@@ -276,6 +276,14 @@ class BaseDataset(Dataset, metaclass=ABCMeta):
     def __getitem__(self, idx):
         """Get the sample for either training or testing given index."""
         if self.test_mode:
-            return self.prepare_test_frames(idx)
+            result = self.prepare_test_frames(idx)
+            while result is None:
+                new_random_idx = np.random.randint(0, len(self.video_infos) - 1)
+                result = self.prepare_test_frames(new_random_idx)
+            return result
 
-        return self.prepare_train_frames(idx)
+        result = self.prepare_train_frames(idx)
+        while result is None:
+            new_random_idx = np.random.randint(0, len(self.video_infos) - 1)
+            result = self.prepare_train_frames(new_random_idx)
+        return result
