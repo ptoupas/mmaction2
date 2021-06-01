@@ -32,8 +32,8 @@ def main():
     
     train_path = out_path + 'certhbot_har_train_split1.txt'
     val_path = out_path + 'certhbot_har_val_split1.txt'
-    file_train = open(train_path, 'w')
-    file_val = open(val_path, 'w')
+    file_train = open(train_path, 'w+')
+    file_val = open(val_path, 'w+')
 
     classes = dict()
 
