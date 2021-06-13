@@ -20,6 +20,12 @@ python tools/analysis/get_flops.py configs/recognition/tsm/tsm_r50_1x1x8_50e_kin
 Benchmark Model:
 python tools/analysis/benchmark.py configs/recognition/x3d/x3d_m_16x5x1_facebook_kinetics400_rgb.py
 
+Convert to ONNX:
+python tools/pytorch2onnx.py $CONFIG_PATH $CHECKPOINT_PATH --shape $SHAPE --verify
+
+FPGA Modeling:
+python tools/analysis/fpga_modeling.py x3d_m configs/recognition/x3d/x3d_m_16x5x1_facebook_kinetics400_rgb.py --use_frames=False
+
 Test Mode:
     dict(
         type='SampleFrames',    -> Type of sampling method
