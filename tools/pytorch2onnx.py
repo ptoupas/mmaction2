@@ -72,7 +72,8 @@ def pytorch2onnx(model,
         keep_initializers_as_inputs=True,
         verbose=show,
         opset_version=opset_version,
-        training=0)
+        do_constant_folding=False,
+        training=torch.onnx.TrainingMode.PRESERVE)
 
     print(f'Successfully exported ONNX model: {output_file}')
     if verify:
