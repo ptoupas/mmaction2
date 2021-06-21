@@ -1,14 +1,18 @@
 import argparse
+from collections import deque
 import csv
+from logging.handlers import DatagramHandler
 import os
 import math
 import numpy as np
 from matplotlib import pyplot as plt
+from numpy.testing._private.utils import assert_equal
 import seaborn as sns
 import coloredlogs, logging
 coloredlogs.install(level='INFO')
 from functools import reduce
 
+import pandas as pd
 import torch
 import onnx
 import onnxruntime as rt
@@ -19,6 +23,7 @@ from mmcv.parallel import collate, scatter
 from mmaction.apis import init_recognizer
 from mmaction.datasets.pipelines import Compose
 
+np.set_printoptions(precision=5, suppress=True)
 
 EXCLUED_STEPS = [
     'OpenCVInit', 'OpenCVDecode', 'DecordInit', 'DecordDecode', 'PyAVInit',
@@ -30,6 +35,7 @@ class ModelFeatureMapsOnnx():
     def __init__(self, model, word_length, clock_freq, bram, dsp):
         self.model_path = model + ".onnx"
         self.layers = {}
+        self.modules = {}
         self.wl = word_length
         self.wb = word_length//8
         self.clock_freq = clock_freq # in MHz
@@ -43,40 +49,32 @@ class ModelFeatureMapsOnnx():
         self.onnx_model = onnx.load(self.model_path)
         onnx.checker.check_model(self.onnx_model)
 
-        print(onnx.helper.printable_graph(self.onnx_model.graph))
+        # print(onnx.helper.printable_graph(self.onnx_model.graph))
 
-    def modeling(self, csv_writer, layer_name, fold_setup, pb, kernel_size, cout, dout, hout, wout, cin, kd, kh, kw, coarse_in, coarse_out, fine):
+    def balance_module_rates(self, rate_graph):
+        
+        rate_ratio = [ abs(rate_graph[i,i+1]/rate_graph[i,i]) for i in range(rate_graph.shape[0]) ]
 
-        muls_unrl = math.ceil(cout * cin * kd * kh * kw * fine)
-        adds_unrl_1 = cout * cin * (math.ceil(kd * kh * kw * fine) - 1)
-        adds_unrl_2 = cout * cin
-        bw_in_w_unrl = cin
-        bw_out_w_unrl = cout
-        thr_w_unrl = cout
+        for i in range(1,rate_graph.shape[0]):
+            # start from end
+            layer = rate_graph.shape[0]-i
 
-        layer = layer_name
-        folding = fold_setup
-        mem_kb = ((pb*cin+kernel_size)*self.wb)/1e3
-        mem_bram = math.ceil(mem_kb/(self.bram_mem/8))
-        mem_util = (mem_bram/self.fpga_bram)*100
+            if abs(rate_graph[layer,layer]) > abs(rate_graph[layer-1,layer]):
+                # propogate forward
+                for j in range(layer,rate_graph.shape[0]):
+                        if(abs(rate_graph[j,j]) <= abs(rate_graph[j-1,j])):
+                            break
+                        rate_graph[j,j]   = abs(rate_graph[j-1,j])
+                        rate_graph[j,j+1] = -rate_graph[j,j]*rate_ratio[j]
 
-        bw_in_w = (bw_in_w_unrl / (coarse_in*coarse_out)) * fine
-        bw_out_w = (bw_out_w_unrl / (coarse_in*coarse_out)) * fine
-        muls = muls_unrl / (coarse_in*coarse_out)
-        adds = adds_unrl_1 / (coarse_in*coarse_out) + adds_unrl_2 / (coarse_in*coarse_out)
-        dsps = muls
-        thr_w = (thr_w_unrl / (coarse_in*coarse_out)) * fine
-
-        bw_in_gb = (self.cycles_per_sec*bw_in_w*self.wb)/1e9	
-        bw_out_gb = (self.cycles_per_sec*bw_out_w*self.wb)/1e9
-        dsps_util = (dsps/self.fpga_dsps)*100
-        thr_v = (self.cycles_per_sec*thr_w)/(cout*dout*hout*wout)
-        thr_go = ((muls + adds)*self.cycles_per_sec)/1e9
-
-        csv_writer.writerow([layer, folding, mem_kb, mem_bram, mem_util, bw_in_w, bw_in_gb, bw_out_w, bw_out_gb, muls, adds, dsps, dsps_util, thr_w, thr_v, thr_go])
-
-        print("Layer: {:<35} Folding: {}\nOn Chip Mem(KB) = {:<15.3f} On Chip Mem(BRAM) = {:<20.3f} On Chip Mem (BRAM %) = {:<20.3f}\nMem BW In(words/cycle) = {:<20.3f} Mem BW In(GBs/sec) = {:<20.3f} Mem BW Out(words/cycle) = {:<20.3f} Mem BW Out(GBs/sec) = {:<20.3f}\nMuls = {:<20.3f} Adds = {:<20.3f} DSPS = {:<20.3f} DSPS % = {:<20.3f}\nThroughtput(words/cycle) = {:<20.3f} Throughtput(outputs/sec) = {:<20.3f} Throughtput(GOps/sec) = {:.3f}".format(layer, folding, mem_kb, mem_bram, mem_util, bw_in_w, bw_in_gb, bw_out_w, bw_out_gb, muls, adds, dsps, dsps_util, thr_w, thr_v, thr_go))
-        print("="*50)
+            elif abs(rate_graph[layer,layer]) < abs(rate_graph[layer-1,layer]):
+                # propogate backward
+                for j in range(0,layer):
+                        if(abs(rate_graph[layer-j,layer-j]) >= abs(rate_graph[layer-j-1,layer-j])):
+                            break
+                        rate_graph[layer-j-1,layer-j]   = -abs(rate_graph[layer-j,layer-j])
+                        rate_graph[layer-j-1,layer-j-1] = -rate_graph[layer-j-1,layer-j]/rate_ratio[layer-j-1]
+        return rate_graph
 
     def get_shape_onnx(self, input):
         tensor_type = input.type.tensor_type
@@ -244,6 +242,400 @@ class ModelFeatureMapsOnnx():
         for k in self.layers.keys():
             logging.info("Node ({}):\n{}".format(k, self.layers[k]))
 
+    def conv_layer_config(self, module, fine, coarse_in, coarse_out):
+        in_shape = module['shape_in']
+        din = in_shape[2]
+        hin = in_shape[3]
+        win = in_shape[4]
+
+        out_shape = module['shape_out']
+        dout = out_shape[2]
+        hout = out_shape[3]
+        wout = out_shape[4]
+
+        kernel_shape = module['kernel']
+        kd = kernel_shape[2]
+        kh = kernel_shape[3]
+        kw = kernel_shape[4]
+
+        cin = kernel_shape[1]
+        cout = kernel_shape[0]
+
+        muls_unrl = kd * kh * kw * fine
+        adds_unrl_1 = kd * kh * kw * fine - 1
+        adds_unrl_2 = 1
+
+        depthwise = False
+        if cout == module['groups']:
+            depthwise = True
+
+        if not depthwise:
+            rates_graph = np.zeros( shape=(3,4) , dtype=float )
+        else:
+            rates_graph = np.zeros( shape=(2,3) , dtype=float )
+
+        # The convolution operation is a Layer and is composed of the following modules: Sliding window, Conv, Accumulator 
+
+        # Rates for the SW module
+        if kd == 1 and kh == 1 and kw == 1:
+            rin_sw = 1
+            rout_sw = 1
+        else:
+            rin_sw = 1
+            rout_sw = (dout*hout*wout)/(din*hin*win)
+        rates_graph[0,0] = rin_sw
+        rates_graph[0,1] = rout_sw
+
+        # Rates for the Conv module
+        rin_conv = fine/cout
+        rout_conv = fine
+        rates_graph[1,1] = rin_conv * coarse_out
+        rates_graph[1,2] = rout_conv * coarse_in
+        
+        if not depthwise:
+            # Rates for the Accumulator module
+            rin_accum = 1
+            rout_accum = 1/cin
+            rates_graph[2,2] = rin_accum
+            rates_graph[2,3] = rout_accum * coarse_in
+
+            # print("CONV RATE GRAPH")
+            # print(rates_graph)
+            # print("-"*50)
+            rates_graph = self.balance_module_rates(rates_graph)
+            # print(rates_graph)
+            # print("=="*50)
+            rate_in = abs(rates_graph[0,0])
+            rate_out = abs(rates_graph[2,3])
+        else:
+            # print("CONV RATE GRAPH")
+            # print(rates_graph)
+            # print("-"*50)
+            rates_graph = self.balance_module_rates(rates_graph)
+            # print(rates_graph)
+            # print("=="*50)
+            rate_in = abs(rates_graph[0,0])
+            rate_out = abs(rates_graph[1,2])
+
+        if kd == 1 and kh == 1 and kw == 1:
+            pb = 1
+        else:
+            # Plane buffer + Line buffer (needed in conjuction with plane buffer)
+            pb = min((din*win*kh), (win*hin*kd)) + min((din*kw), (win*kh))
+        kernel_size = int(np.prod(np.array(kernel_shape)))
+        mem = pb + kernel_size + cin
+
+        muls = math.ceil(muls_unrl * coarse_in * coarse_out)
+        #TODO: This calculations are not correct. Need revision.
+        adds = math.ceil(adds_unrl_1 * coarse_in * coarse_out) + math.ceil(adds_unrl_2 * coarse_in * coarse_out)
+        return rate_in, rate_out, muls, adds, mem
+
+    def se_layer_config(self, module, coarse_in_1, coarse_out_1, coarse_in_2, coarse_out_2, fine1, fine2):
+        se_keys = list(module.keys())
+        glavpool_key = se_keys[3]
+        conv1_key = se_keys[4]
+        conv2_key = se_keys[6]
+
+        in_shape = module[glavpool_key]['shape_in']
+        glavpool_rate_in = 1 # * module[conv1_key]['kernel'][1]
+        glavpool_rate_out = 1/(in_shape[2]*in_shape[3]*in_shape[4]) # * module[conv1_key]['kernel'][1]
+        glavpool_mem = in_shape[1]
+        glavpool_muls = 2
+
+        conv1_rate_in, conv1_rate_out, conv1_muls, conv1_adds, conv1_mem = self.conv_layer_config(module[conv1_key], coarse_in_1, coarse_out_1, fine1)
+
+        relu_rate_in = 1
+        relu_rate_out = 1
+
+        conv2_rate_in, conv2_rate_out, conv2_muls, conv2_adds, conv2_mem = self.conv_layer_config(module[conv2_key], coarse_in_2, coarse_out_2, fine2)
+
+        sigmoid_rate_in = 1
+        sigmoid_rate_out = 1
+        sigmoid_dsps = 3
+
+        elemwise_mul_rate_in = 1
+        elemwise_mul_rate_out = 1
+        elemwise_mul_rate_dsps = 1
+
+        rates_graph = np.zeros( shape=(6,7) , dtype=float )
+        rates_graph[0,0] = glavpool_rate_in
+        rates_graph[0,1] = glavpool_rate_out
+
+        rates_graph[1,1] = conv1_rate_in
+        rates_graph[1,2] = conv1_rate_out
+
+        rates_graph[2,2] = relu_rate_in
+        rates_graph[2,3] = relu_rate_out
+
+        rates_graph[3,3] = conv2_rate_in
+        rates_graph[3,4] = conv2_rate_out
+
+        rates_graph[4,4] = sigmoid_rate_in
+        rates_graph[4,5] = sigmoid_rate_out
+
+        rates_graph[5,5] = elemwise_mul_rate_in
+        rates_graph[5,6] = elemwise_mul_rate_out
+        
+        # print("SE RATE GRAPH")
+        # print(rates_graph)
+        # print("-"*50)
+        rates_graph = self.balance_module_rates(rates_graph)
+        # print(rates_graph)
+        # print("=="*50)
+        rate_in = abs(rates_graph[0,0])
+        rate_out = abs(rates_graph[5,6])
+
+        return rate_in, rate_out, glavpool_muls + conv1_muls + conv2_muls + sigmoid_dsps + elemwise_mul_rate_dsps, conv1_adds + conv2_adds, glavpool_mem + conv1_mem + conv2_mem 
+
+    def create_modules(self):
+        se_module = deque(maxlen=6)
+        swish_module = deque(maxlen=3)
+        prev_output_id = -1
+        for k in self.layers.keys():
+            curr_output_id = int(self.layers[k]['output_id'])
+            if not prev_output_id == -1:
+                assert curr_output_id == prev_output_id + 1, "Modules are not in the correct order. Revise the graph creation"
+            prev_output_id = curr_output_id
+        
+            name = k
+            operation = self.layers[k]['operation']
+            input_shape = self.layers[k]['input'][0]
+            output_shape = self.layers[k]['output']
+            if operation == 'Mul' or operation == 'Add':
+                input_shape = output_shape
+            kernel = self.layers[k]['kernel']
+            bias = self.layers[k]['bias']
+            groups = self.layers[k]['groups']
+
+            self.modules[name] = {"operation": operation,
+                                  "shape_in": input_shape,
+                                  "shape_out": output_shape,
+                                  "kernel": kernel,
+                                  "bias": bias,
+                                  "groups": groups}
+
+            swish_module.append([operation, name])
+            if swish_module[0][0] == 'Sigmoid' and swish_module[1][0] == 'Mul' and swish_module[2][0] == 'Conv':
+                logging.debug("Creating Swish Activation Module")
+
+                sigmoid_name = swish_module[0][1]
+                operation = self.layers[sigmoid_name]['operation']
+                input_shape = self.layers[sigmoid_name]['input'][0]
+                swish_input_shape = input_shape
+                output_shape = self.layers[sigmoid_name]['output']
+                if operation == 'Mul' or operation == 'Add':
+                    input_shape = output_shape
+                kernel = self.layers[sigmoid_name]['kernel']
+                bias = self.layers[sigmoid_name]['bias']
+                groups = self.layers[sigmoid_name]['groups']
+                sigmoid = {"operation": operation,
+                       "shape_in": input_shape,
+                       "shape_out": output_shape,
+                       "kernel": kernel,
+                       "bias": bias,
+                       "groups": groups}
+
+                mul_name = swish_module[1][1]
+                operation = self.layers[mul_name]['operation']
+                input_shape = self.layers[mul_name]['input'][0]
+                output_shape = self.layers[mul_name]['output']
+                swish_output_shape = output_shape
+                if operation == 'Mul' or operation == 'Add':
+                    input_shape = output_shape
+                kernel = self.layers[mul_name]['kernel']
+                bias = self.layers[mul_name]['bias']
+                groups = self.layers[mul_name]['groups']
+                mul = {"operation": operation,
+                       "shape_in": input_shape,
+                       "shape_out": output_shape,
+                       "kernel": kernel,
+                       "bias": bias,
+                       "groups": groups}
+
+                name = 'Swish_' + swish_module[0][1].split('_')[1]
+                operation = 'Swish'
+                self.modules[name] = {"operation": operation,
+                                      "shape_in": swish_input_shape,
+                                      "shape_out": swish_output_shape,
+                                      sigmoid_name: sigmoid,
+                                      mul_name: mul}
+
+                del self.modules[sigmoid_name]
+                del self.modules[mul_name]
+
+                conv_name = swish_module[2][1]
+                del self.modules[conv_name]
+
+                operation = self.layers[conv_name]['operation']
+                input_shape = self.layers[conv_name]['input'][0]
+                output_shape = self.layers[conv_name]['output']
+                if operation == 'Mul' or operation == 'Add':
+                    input_shape = output_shape
+                kernel = self.layers[conv_name]['kernel']
+                bias = self.layers[conv_name]['bias']
+                groups = self.layers[conv_name]['groups']
+                self.modules[conv_name] = {"operation": operation,
+                                    "shape_in": input_shape,
+                                    "shape_out": output_shape,
+                                    "kernel": kernel,
+                                    "bias": bias,
+                                    "groups": groups}
+
+            se_module.append([operation, name])
+            if se_module[0][0] == 'GlobalAveragePool' and se_module[1][0] == 'Conv' and se_module[2][0] == 'Relu' and se_module[3][0] == 'Conv' and se_module[4][0] == 'Sigmoid' and se_module[5][0] == 'Mul':
+                logging.debug("Creating Squeeze and Excitation Module")
+
+                gap_name = se_module[0][1]
+                operation = self.layers[gap_name]['operation']
+                input_shape = self.layers[gap_name]['input'][0]
+                se_input_shape = input_shape
+                output_shape = self.layers[gap_name]['output']
+                if operation == 'Mul' or operation == 'Add':
+                    input_shape = output_shape
+                kernel = self.layers[gap_name]['kernel']
+                bias = self.layers[gap_name]['bias']
+                groups = self.layers[gap_name]['groups']
+                gap = {"operation": operation,
+                       "shape_in": input_shape,
+                       "shape_out": output_shape,
+                       "kernel": kernel,
+                       "bias": bias,
+                       "groups": groups}
+
+                conv1_name = se_module[1][1]
+                operation = self.layers[conv1_name]['operation']
+                input_shape = self.layers[conv1_name]['input'][0]
+                output_shape = self.layers[conv1_name]['output']
+                if operation == 'Mul' or operation == 'Add':
+                    input_shape = output_shape
+                kernel = self.layers[conv1_name]['kernel']
+                bias = self.layers[conv1_name]['bias']
+                groups = self.layers[conv1_name]['groups']
+                conv1 = {"operation": operation,
+                       "shape_in": input_shape,
+                       "shape_out": output_shape,
+                       "kernel": kernel,
+                       "bias": bias,
+                       "groups": groups}
+
+                relu_name = se_module[2][1]
+                operation = self.layers[relu_name]['operation']
+                input_shape = self.layers[relu_name]['input'][0]
+                output_shape = self.layers[relu_name]['output']
+                if operation == 'Mul' or operation == 'Add':
+                    input_shape = output_shape
+                kernel = self.layers[relu_name]['kernel']
+                bias = self.layers[relu_name]['bias']
+                groups = self.layers[relu_name]['groups']
+                relu = {"operation": operation,
+                       "shape_in": input_shape,
+                       "shape_out": output_shape,
+                       "kernel": kernel,
+                       "bias": bias,
+                       "groups": groups}
+
+                conv2_name = se_module[3][1]
+                operation = self.layers[conv2_name]['operation']
+                input_shape = self.layers[conv2_name]['input'][0]
+                output_shape = self.layers[conv2_name]['output']
+                if operation == 'Mul' or operation == 'Add':
+                    input_shape = output_shape
+                kernel = self.layers[conv2_name]['kernel']
+                bias = self.layers[conv2_name]['bias']
+                groups = self.layers[conv2_name]['groups']
+                conv2 = {"operation": operation,
+                       "shape_in": input_shape,
+                       "shape_out": output_shape,
+                       "kernel": kernel,
+                       "bias": bias,
+                       "groups": groups}
+
+                sigmoid_name = se_module[4][1]
+                operation = self.layers[sigmoid_name]['operation']
+                input_shape = self.layers[sigmoid_name]['input'][0]
+                output_shape = self.layers[sigmoid_name]['output']
+                if operation == 'Mul' or operation == 'Add':
+                    input_shape = output_shape
+                kernel = self.layers[sigmoid_name]['kernel']
+                bias = self.layers[sigmoid_name]['bias']
+                groups = self.layers[sigmoid_name]['groups']
+                sigmoid = {"operation": operation,
+                       "shape_in": input_shape,
+                       "shape_out": output_shape,
+                       "kernel": kernel,
+                       "bias": bias,
+                       "groups": groups}
+
+                mul_name = se_module[5][1]
+                operation = self.layers[mul_name]['operation']
+                input_shape = self.layers[mul_name]['input'][0]
+                output_shape = self.layers[mul_name]['output']
+                se_output_shape = output_shape
+                if operation == 'Mul' or operation == 'Add':
+                    input_shape = output_shape
+                kernel = self.layers[mul_name]['kernel']
+                bias = self.layers[mul_name]['bias']
+                groups = self.layers[mul_name]['groups']
+                mul = {"operation": operation,
+                       "shape_in": input_shape,
+                       "shape_out": output_shape,
+                       "kernel": kernel,
+                       "bias": bias,
+                       "groups": groups}
+
+                name = 'Se_' + se_module[0][1].split('_')[1]
+                operation = 'SqueezeExcitation'
+                self.modules[name] = {"operation": operation,
+                                      "shape_in": se_input_shape,
+                                      "shape_out": se_output_shape,
+                                      gap_name: gap,
+                                      conv1_name: conv1,
+                                      relu_name: relu,
+                                      conv2_name: conv2,
+                                      sigmoid_name: sigmoid,
+                                      mul_name: mul}
+
+                del self.modules[gap_name]
+                del self.modules[conv1_name]
+                del self.modules[relu_name]
+                del self.modules[conv2_name]
+                del self.modules[sigmoid_name]
+                del self.modules[mul_name]
+
+    def model_layer(self, layer, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem):
+        
+        layer = layer
+        folding = folding_name
+        mem_kb = (mem*self.wb)/1e3
+        mem_bram = math.ceil(mem_kb/(self.bram_mem/8))
+        mem_util = (mem_bram/self.fpga_bram)*100
+
+        bw_in_w = rate_in
+        bw_out_w = rate_out
+
+        thr_w_in = rate_in
+        thr_w_out = rate_out
+
+        muls = muls
+        adds = adds
+        dsps = muls
+
+        bw_in_gb = (self.cycles_per_sec*bw_in_w*self.wb)/1e9	
+        bw_out_gb = (self.cycles_per_sec*bw_out_w*self.wb)/1e9
+
+        thr_in = (self.cycles_per_sec*thr_w_in)/in_size
+        thr_out = (self.cycles_per_sec*thr_w_out)/out_size
+
+        thr_go = ((muls + adds)*self.cycles_per_sec)/1e9
+        dsps_util = (dsps/self.fpga_dsps)*100
+
+        if dsps_util < 90.0 and mem_util < 90.0:
+            csv_writer.writerow([layer, folding, mem_util, dsps_util, thr_in, thr_out, bw_in_w, bw_out_w, mem_kb, mem_bram, bw_in_gb, bw_out_gb, muls, adds, dsps, thr_w_out, thr_go])
+
+            print("On Chip Mem(KB) = {:<15.3f} On Chip Mem(BRAM) = {:<20.3f} On Chip Mem (BRAM %) = {:<20.3f}\nMem BW In(words/cycle) = {:<20.3f} Mem BW In(GBs/sec) = {:<20.3f} Mem BW Out(words/cycle) = {:<20.3f} Mem BW Out(GBs/sec) = {:<20.3f}\nMuls = {:<20.3f} Adds = {:<20.3f} DSPS = {:<20.3f} DSPS % = {:<20.3f}\nThroughtput(words/cycle) = {:<20.3f} Consumption(inputs/sec) = {:<20.3f} Throughtput(outputs/sec) = {:<20.3f} Throughtput(GOps/sec) = {:.3f}".format(mem_kb, mem_bram, mem_util, bw_in_w, bw_in_gb, bw_out_w, bw_out_gb, muls, adds, dsps, dsps_util, thr_w_out, thr_in, thr_out, thr_go))
+        else:
+            logging.error("Design point dropped because of too many recourses needed. DSPS = {} ({}%). BRAM = {} ({}%)".format(dsps, dsps_util, mem_bram, mem_util))
+
     def create_design_points(self, file_name):
             if not os.path.exists(os.path.join(os.getcwd(), 'fpga_modeling_reports')):
                 os.makedirs(os.path.join(os.getcwd(), 'fpga_modeling_reports'))
@@ -251,73 +643,287 @@ class ModelFeatureMapsOnnx():
             with open(csv_file, mode='w') as model_results:
                 csv_writer = csv.writer(model_results, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
 
-                csv_writer.writerow(["Layer", "Folding", "On-Chip Memory(KB)", "On-Chip Memory(BRAM)", "On-Chip Memory(BRAM %)", "Memory Bandwidth In(words/cycle)", "Memory Bandwidth In(GBs/sec)", "Memory Bandwidth Out(words/cycle)", "Memory Bandwidth Out(GBs/sec)", "Multipliers", "Adders", "DSPS", "DSPS %", "Throughtput(words/cycle)", "Throughtput(outputs/sec)", "Throughtput(GOps/sec)"])
+                csv_writer.writerow(["Layer", "Folding", "On-Chip Memory(BRAM %)", "DSPS %", "Consumption(inputs/sec)", "Throughtput(outputs/sec)", "Memory Bandwidth In(words/cycle)", "Memory Bandwidth Out(words/cycle)", "On-Chip Memory(KB)", "On-Chip Memory(BRAM)", "Memory Bandwidth In(GBs/sec)", "Memory Bandwidth Out(GBs/sec)", "Multipliers", "Adders", "DSPS", "Throughtput(words/cycle)", "Throughtput(GOps/sec)"])
 
-                for k in self.layers.keys():
+                for k in self.modules.keys():
                     name = k
-                    operation = self.layers[k]['operation']
-                    if operation == 'Conv':
-                        in_shape = self.layers[k]['input'][0]
-                        din = in_shape[2]
-                        hin = in_shape[3]
-                        win = in_shape[4]
+                    operation = self.modules[k]['operation']
+                    logging.error("Layer: {} -> Operation: {}.".format(name, operation))
 
-                        out_shape = self.layers[k]['output']
+                    if operation == 'Conv':
+                        out_shape = self.modules[name]['shape_out']
                         dout = out_shape[2]
                         hout = out_shape[3]
                         wout = out_shape[4]
 
-                        kernel_shape = self.layers[k]['kernel']
+                        in_shape = self.modules[name]['shape_in']
+                        din = in_shape[2]
+                        hin = in_shape[3]
+                        win = in_shape[4]
+                        
+                        kernel_shape = self.modules[name]['kernel']
                         kd = kernel_shape[2]
                         kh = kernel_shape[3]
                         kw = kernel_shape[4]
-
-                        kd_minus = kd-1 if kd > 1 else 1
-                        kh_minus = kh-1 if kh > 1 else 1
-                        kw_minus = kw-1 if kw > 1 else 1
-                        
                         cin = kernel_shape[1]
                         cout = kernel_shape[0]
 
-                        # In case of pointwise convolution we dont need the plane buffer anymore
+                        in_size = cin * din * hin * win
+                        out_size = cout * dout * hout * wout
+
+                        pr_name = name
+                        if cout == self.modules[name]['groups']:
+                            pr_name = pr_name + "_DepthWise"
                         if kd == 1 and kh == 1 and kw == 1:
-                            pb = 1
-                        else:
-                            # Plane buffer + Line buffer (needed in conjuction with plane buffer) + Accumulator Buffer
-                            pb = min((din*win*kh_minus), (win*hin*kd_minus)) + min((din*kw_minus), (win*kh_minus)) + cin
+                            pr_name = pr_name + "_PointWise"
 
-                        kernel_size = np.prod(np.array(kernel_shape))
-
-                        depthwise = False
-                        if cout == self.layers[k]['groups']:
-                            depthwise = True
-
-                        if depthwise and (not pb == 1):
-                            pb = pb - cin
+                        coarse_in_config = [1, (cin * self.modules[name]['groups'])//4, (cin * self.modules[name]['groups'])//2, cin * self.modules[name]['groups']]
+                        coarse_in_config = np.unique(coarse_in_config)
+                        coarse_in_config = coarse_in_config[np.nonzero(coarse_in_config)].tolist()
+                        coarse_out_config = [1, cout//4, cout//2, cout]
+                        coarse_out_config = np.unique(coarse_out_config)
+                        coarse_out_config = coarse_out_config[np.nonzero(coarse_out_config)].tolist()
+                        max_fine = kd * kh * kw
+                        fine_config = np.array([kd/max_fine, kh/max_fine, kw/max_fine, (kd * kh)/max_fine, (kh * kw)/max_fine, (kd * kw)/max_fine, 1])
+                        fine_config = np.unique(fine_config).tolist()
+                        if kd == 1 and kh == 1 and kw == 1:
+                            fine_config = [0.5, 1]
                         
-                        if cin == 1:
-                            coarse_in_config = [1]
-                        else:
-                            coarse_in_config = [1, cin]
-                        if cout == 1:
-                            coarse_out_config = [1]
-                        else:
-                            coarse_out_config = [1, cout]
-                        fine_config = [0.25, 0.5, 0.75, 1]
-
                         for coarse_in in coarse_in_config:
                             for coarse_out in coarse_out_config:
                                 for fine in fine_config:
-                                    if coarse_in == cin and coarse_out == cout and (not fine == 1):
-                                        continue
-                                    coarse_in_name = str(coarse_in) if coarse_in == 1 else 'Cin'
-                                    coarse_out_name = str(coarse_out) if coarse_out == 1 else 'Cout'
-                                    fine_name = str(fine)
-                                    folding_name = "Coarse({}/{}) - Fine({})".format(coarse_in_name, coarse_out_name, fine_name)
-                                    
-                                    self.modeling(csv_writer, name, folding_name, pb, kernel_size, cout, dout, hout, wout, cin, kd, kh, kw, coarse_in, coarse_out, fine)
 
-                        csv_writer.writerow(["-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"])
+                                    coarse_in_name = str(coarse_in)
+                                    coarse_out_name = str(coarse_out)
+                                    folding_name = "N_Coarse({}/{}) - f_Fine({:.2f})".format(coarse_in_name, coarse_out_name, fine)
+
+                                    logging.warning("Fold = {}. Channels In = {} - Filters = {}".format(folding_name, cin, cout))
+
+                                    rate_in, rate_out, muls, adds, mem = self.conv_layer_config(self.modules[name], fine, coarse_in, coarse_out)
+
+                                    # logging.error("Fold = {}. rate IN = {}. rate OUT = {}".format(folding_name, rate_in, rate_out))
+
+                                    self.model_layer(pr_name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem)
+
+                    elif operation == 'BatchNormalization':
+                        out_shape = self.modules[name]['shape_out']
+                        cout = out_shape[1]
+                        dout = out_shape[2]
+                        hout = out_shape[3]
+                        wout = out_shape[4]
+                        out_size = int(np.prod(np.array(out_shape)))
+
+                        in_shape = self.modules[name]['shape_in']
+                        cin = in_shape[1]
+                        din = in_shape[2]
+                        hin = in_shape[3]
+                        win = in_shape[4]
+                        in_size = int(np.prod(np.array(in_shape)))
+
+                        assert out_shape == in_shape, 'Input and output shapes bust be identical in BatchNormalization Layer'
+
+                        # coarse_config = list(reduce(list.__add__, ([i, cin//i] for i in range(1, int(cin**0.5) + 1) if cin % i == 0)))
+                        coarse_config = [1, cin//4, cin//2, cin]
+                        coarse_config = np.unique(coarse_config)
+                        coarse_config = coarse_config[np.nonzero(coarse_config)].tolist()
+
+                        for coarse in coarse_config:
+
+                            rate_in = 1 * coarse
+                            rate_out = 1 * coarse
+                            mem = cin * 4
+                            muls = 1 * coarse
+                            adds = 3 * coarse
+                            folding_name = "N_Coarse({}/{})".format(coarse, coarse)
+
+                            logging.warning("Fold = {}. Channels In = {} - Filters = {}".format(folding_name, cin, cout))
+
+                            self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem)
+
+                    elif operation == 'Relu':
+                        out_shape = self.modules[name]['shape_out']
+                        cout = out_shape[1]
+                        dout = out_shape[2]
+                        hout = out_shape[3]
+                        wout = out_shape[4]
+                        out_size = int(np.prod(np.array(out_shape)))
+
+                        in_shape = self.modules[name]['shape_in']
+                        cin = in_shape[1]
+                        din = in_shape[2]
+                        hin = in_shape[3]
+                        win = in_shape[4]
+                        in_size = int(np.prod(np.array(in_shape)))
+
+                        assert out_shape == in_shape, 'Input and output shapes bust be identical in BatchNormalization Layer'
+
+                        # coarse_config = list(reduce(list.__add__, ([i, cin//i] for i in range(1, int(cin**0.5) + 1) if cin % i == 0)))
+                        coarse_config = np.unique(coarse_config)
+                        coarse_config = coarse_config[np.nonzero(coarse_config)].tolist()
+                        
+
+                        for coarse in coarse_config:
+
+                            rate_in = 1 * coarse
+                            rate_out = 1 * coarse
+                            mem = 0
+                            muls = 0
+                            adds = 0
+                            folding_name = "N_Coarse({}/{})".format(coarse, coarse)
+
+                            logging.warning("Fold = {}. Channels In = {} - Filters = {}".format(folding_name, cin, cout))
+
+                            self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem)
+                    elif operation == 'GlobalAveragePool':
+                        out_shape = self.modules[name]['shape_out']
+                        cout = out_shape[1]
+                        dout = out_shape[2]
+                        hout = out_shape[3]
+                        wout = out_shape[4]
+                        out_size = int(np.prod(np.array(out_shape)))
+
+                        in_shape = self.modules[name]['shape_in']
+                        cin = in_shape[1]
+                        din = in_shape[2]
+                        hin = in_shape[3]
+                        win = in_shape[4]
+                        in_size = int(np.prod(np.array(in_shape)))
+
+                        assert cin == cout, 'Input and output shapes bust be identical in BatchNormalization Layer'
+
+                        # coarse_config = list(reduce(list.__add__, ([i, cin//i] for i in range(1, int(cin**0.5) + 1) if cin % i == 0)))
+                        coarse_config = np.unique(coarse_config)
+                        coarse_config = coarse_config[np.nonzero(coarse_config)].tolist()
+
+                        for coarse in coarse_config:
+
+                            rate_in = 1 * coarse
+                            rate_out = 1/(din * hin * win) * coarse
+                            mem = cin
+                            muls = 2 * coarse
+                            adds = 1 * coarse
+                            folding_name = "N_Coarse({}/{})".format(coarse, coarse)
+
+                            logging.warning("Fold = {}. Channels In = {} - Filters = {}".format(folding_name, cin, cout))
+
+                            self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem)
+                    elif operation == 'SqueezeExcitation':
+                        out_shape = self.modules[name]['shape_out']
+                        cout = out_shape[1]
+                        dout = out_shape[2]
+                        hout = out_shape[3]
+                        wout = out_shape[4]
+                        out_size = cout * dout * hout * wout
+
+                        in_shape = self.modules[name]['shape_in']
+                        cin = in_shape[1]
+                        din = in_shape[2]
+                        hin = in_shape[3]
+                        win = in_shape[4]
+                        in_size = cin * din * hin * win
+
+                        se_keys = list(self.modules[name].keys())
+                        conv1_key = se_keys[4]
+                        conv2_key = se_keys[6]
+                        coarse_in_conv1 = self.modules[name][conv1_key]['kernel'][1]
+                        coarse_in_conv2 = self.modules[name][conv2_key]['kernel'][1]
+                        coarse_out_conv1 = self.modules[name][conv1_key]['kernel'][0]
+                        coarse_out_conv2 = self.modules[name][conv2_key]['kernel'][0]
+
+                        coarse_in_config_conv1 = [1, coarse_in_conv1//4, coarse_in_conv1//2, coarse_in_conv1]
+                        coarse_in_config_conv1 = np.unique(coarse_in_config_conv1)
+                        coarse_in_config_conv1 = coarse_in_config_conv1[np.nonzero(coarse_in_config_conv1)].tolist()
+
+                        coarse_in_config_conv2 = [1, coarse_in_conv2//4, coarse_in_conv2//2, coarse_in_conv2]
+                        coarse_in_config_conv2 = np.unique(coarse_in_config_conv2)
+                        coarse_in_config_conv2 = coarse_in_config_conv2[np.nonzero(coarse_in_config_conv2)].tolist()
+
+                        coarse_out_config_conv1 = [1, coarse_out_conv1//4, coarse_out_conv1//2, coarse_out_conv1]
+                        coarse_out_config_conv1 = np.unique(coarse_out_config_conv1)
+                        coarse_out_config_conv1 = coarse_out_config_conv1[np.nonzero(coarse_out_config_conv1)].tolist()
+
+                        coarse_out_config_conv2 = [1, coarse_out_conv2//4, coarse_out_conv2//2, coarse_out_conv2]
+                        coarse_out_config_conv2 = np.unique(coarse_out_config_conv2)
+                        coarse_out_config_conv2 = coarse_out_config_conv2[np.nonzero(coarse_out_config_conv2)].tolist()
+
+                        # coarse_in_config_conv1 = [1, coarse_in_conv1]
+                        # coarse_in_config_conv2 = [1, coarse_in_conv2]
+                        # coarse_out_config_conv1 = [1, coarse_out_conv1]
+                        # coarse_out_config_conv2 = [1, coarse_out_conv2]
+                        
+                        kd_1 = self.modules[name][conv1_key]['kernel'][2]
+                        kh_1 = self.modules[name][conv1_key]['kernel'][3]
+                        kw_1 = self.modules[name][conv1_key]['kernel'][4]
+                        max_fine = kd_1 * kh_1 * kw_1
+                        fine_config_1 = np.array([kd_1/max_fine, kh_1/max_fine, kw_1/max_fine, (kd_1 * kh_1)/max_fine, (kh_1 * kw_1)/max_fine, (kd_1 * kw_1)/max_fine, 1])
+                        fine_config_1 = np.unique(fine_config_1).tolist()
+                        if kd_1 == 1 and kh_1 == 1 and kw_1 == 1:
+                            fine_config_1 = [0.5, 1]
+
+                        kd_2 = self.modules[name][conv2_key]['kernel'][2]
+                        kh_2 = self.modules[name][conv2_key]['kernel'][3]
+                        kw_2 = self.modules[name][conv2_key]['kernel'][4]
+                        max_fine = kd_2 * kh_2 * kw_2
+                        fine_config_2 = np.array([kd_2/max_fine, kh_2/max_fine, kw_2/max_fine, (kd_2 * kh_2)/max_fine, (kh_2 * kw_2)/max_fine, (kd_2 * kw_2)/max_fine, 1])
+                        fine_config_2 = np.unique(fine_config_2).tolist()
+                        if kd_2 == 1 and kh_2 == 1 and kw_2 == 1:
+                            fine_config_2 = [0.5, 1]
+
+                        for coarse_in_1 in coarse_in_config_conv1:
+                            for coarse_in_2 in coarse_in_config_conv2:
+                                for coarse_out_1 in coarse_out_config_conv1:
+                                    for coarse_out_2 in coarse_out_config_conv2:
+                                        for fine_1 in fine_config_1:
+                                            for fine_2 in fine_config_2:
+                                                if not coarse_out_1 == coarse_in_2:
+                                                    logging.error("Skipping configuration N_Coarse_1({}/{}) - N_Coarse_2({}/{}) - f_Fine_1({}) - f_Fine_2({}) since N_Coarse_1 out ({}) does not match with N_Coarse_2 in ({}).".format(coarse_in_1, coarse_out_1, coarse_in_2, coarse_out_2, fine_1, fine_2, coarse_out_1, coarse_in_2))
+                                                    continue
+
+                                                folding_name = "N_Coarse_1({}/{}) - N_Coarse_2({}/{}) - f_Fine_1({:.2f}) - f_Fine_2({:.2f})".format(coarse_in_1, coarse_out_1, coarse_in_2, coarse_out_2, fine_1, fine_2)
+                                                
+                                                logging.warning("Fold = {}".format(folding_name))
+
+                                                rate_in, rate_out, muls, adds, mem = self.se_layer_config(self.modules[name], coarse_in_1, coarse_out_1, coarse_in_2, coarse_out_2, fine_1, fine_2)
+                                                # logging.error("Fold = {}. rate IN = {}. rate OUT = {}".format(folding_name, rate_in, rate_out))
+
+                                                self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem)
+
+                    elif operation == 'Swish':
+                        out_shape = self.modules[name]['shape_out']
+                        cout = out_shape[1]
+                        dout = out_shape[2]
+                        hout = out_shape[3]
+                        wout = out_shape[4]
+                        out_size = int(np.prod(np.array(out_shape)))
+
+                        in_shape = self.modules[name]['shape_in']
+                        cin = in_shape[1]
+                        din = in_shape[2]
+                        hin = in_shape[3]
+                        win = in_shape[4]
+                        in_size = int(np.prod(np.array(in_shape)))
+
+                        assert out_shape == in_shape, 'Input and output shapes bust be identical in BatchNormalization Layer'
+
+                        # coarse_config = list(reduce(list.__add__, ([i, cin//i] for i in range(1, int(cin**0.5) + 1) if cin % i == 0)))
+                        coarse_config = np.unique(coarse_config)
+                        coarse_config = coarse_config[np.nonzero(coarse_config)].tolist()
+
+
+                        for coarse in coarse_config:
+
+                            rate_in = 1 * coarse
+                            rate_out = 1 * coarse
+                            mem = 0
+                            muls = 4 * coarse
+                            adds = 1 * coarse
+                            folding_name = "N_Coarse({}/{})".format(coarse, coarse)
+
+                            logging.warning("Fold = {}. Channels In = {} - Filters = {}".format(folding_name, cin, cout))
+
+                            self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem)
+
+                    csv_writer.writerow(["-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"])
 
 class ModelFeatureMaps():
     def __init__(self, model, word_length, clock_freq, bram, dsp):
@@ -454,7 +1060,7 @@ class ModelFeatureMaps():
         thr_v = (self.cycles_per_sec*thr_w)/(cout*dout*hout*wout)
         thr_go = ((muls + adds)*self.cycles_per_sec)/1e9
 
-        csv_writer.writerow([layer, folding, mem_kb, mem_bram, mem_util, bw_in_w, bw_in_gb, bw_out_w, bw_out_gb, muls, adds, dsps, dsps_util, thr_w, thr_v, thr_go])
+        csv_writer.writerow([layer, folding, mem_util, dsps_util, thr_v, bw_in_w, bw_out_w, mem_kb, mem_bram, bw_in_gb, bw_out_gb, muls, adds, dsps, thr_w, thr_go])
 
         print("Layer: {:<35} Folding: {}\nOn Chip Mem(KB) = {:<15.3f} On Chip Mem(BRAM) = {:<20.3f} On Chip Mem (BRAM %) = {:<20.3f}\nMem BW In(words/cycle) = {:<20.3f} Mem BW In(GBs/sec) = {:<20.3f} Mem BW Out(words/cycle) = {:<20.3f} Mem BW Out(GBs/sec) = {:<20.3f}\nMuls = {:<20.3f} Adds = {:<20.3f} DSPS = {:<20.3f} DSPS % = {:<20.3f}\nThroughtput(words/cycle) = {:<20.3f} Throughtput(outputs/sec) = {:<20.3f} Throughtput(GOps/sec) = {:.3f}".format(layer, folding, mem_kb, mem_bram, mem_util, bw_in_w, bw_in_gb, bw_out_w, bw_out_gb, muls, adds, dsps, dsps_util, thr_w, thr_v, thr_go))
         print("="*50)
@@ -466,7 +1072,7 @@ class ModelFeatureMaps():
         with open(csv_file, mode='w') as model_results:
             csv_writer = csv.writer(model_results, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
 
-            csv_writer.writerow(["Layer", "Folding", "On-Chip Memory(KB)", "On-Chip Memory(BRAM)", "On-Chip Memory(BRAM %)", "Memory Bandwidth In(words/cycle)", "Memory Bandwidth In(GBs/sec)", "Memory Bandwidth Out(words/cycle)", "Memory Bandwidth Out(GBs/sec)", "Multipliers", "Adders", "DSPS", "DSPS %", "Throughtput(words/cycle)", "Throughtput(outputs/sec)", "Throughtput(GOps/sec)"])
+            csv_writer.writerow(["Layer", "Folding", "On-Chip Memory(BRAM %)", "DSPS %", "Throughtput(outputs/sec)", "Memory Bandwidth In(words/cycle)", "Memory Bandwidth Out(words/cycle)", "On-Chip Memory(KB)", "On-Chip Memory(BRAM)", "Memory Bandwidth In(GBs/sec)", "Memory Bandwidth Out(GBs/sec)", "Multipliers", "Adders", "DSPS", "Throughtput(words/cycle)", "Throughtput(GOps/sec)"])
 
             for n in self.activation.keys():
                 name = n.split('.')
@@ -541,8 +1147,31 @@ class ModelFeatureMaps():
                     csv_writer.writerow(["-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"])
                     # print("**"*100)
 
+def find_pareto(scores):
+    # Count number of items
+    population_size = scores.shape[0]
+    # Create a NumPy index for scores on the pareto front (zero indexed)
+    population_ids = np.arange(population_size)
+    # Create a starting list of items on the Pareto front
+    # All items start off as being labelled as on the Parteo front
+    pareto_front = np.ones(population_size, dtype=bool)
+    # Loop through each item. This will then be compared with all other items
+    for i in range(population_size):
+        # Loop through all other items
+        for j in range(population_size):
+            # Check if our 'i' pint is dominated by out 'j' point
+            # print("[{}][0] = {}. [{}][0] = {}. [{}][1] = {}. [{}][1] = {}.".format(j, scores[j][0], i, scores[i][0], j, scores[j][1], i, scores[i][1]))
+            if (scores[j][0] >= scores[i][0] and scores[j][1] <= scores[i][1]) and (scores[j][0] > scores[i][0] or scores[j][1] < scores[i][1]):
+                # j dominates i. Label 'i' point as not on Pareto front
+                pareto_front[i] = 0
+                # Stop further comparisons with 'i' (no more comparisons needed)
+                break
+    # Return ids of scenarios on pareto front
+    return population_ids[pareto_front]
+
 def plot_graph(x, y, leg, name, type, model_name):
-    sns.set(rc={'figure.figsize':(13,8)})
+    se_layer = True if "Se" in name.split("_") else False
+    sns.set(rc={'figure.figsize':(15,8)})
     sns.set_style("darkgrid", {"axes.facecolor": ".85"})
     
     dsps_dir = os.path.join(os.getcwd(), 'fpga_modeling_reports', 'graphs', model_name, 'throughput_dsps')
@@ -552,39 +1181,65 @@ def plot_graph(x, y, leg, name, type, model_name):
     if not os.path.exists(mem_bw_dir):
         os.makedirs(mem_bw_dir)
     if type == 'DSPS':
-        sns.scatterplot(x=np.array(x), y=np.array(y[0]), hue=leg, style=leg, s=100)
+
+        scores = np.zeros((len(x), 2))
+        scores[:,0] = x
+        scores[:,1] = y[0]
+        pareto = find_pareto(scores)
+        pareto_front = scores[pareto]
+
+        pareto_front_df = pd.DataFrame(pareto_front)
+        pareto_front_df.sort_values(0, inplace=True)
+        pareto_front = pareto_front_df.values
+
+        sns.scatterplot(x=np.array(x), y=np.array(y[0]), hue=leg, style=leg, s=50)
+        sns.lineplot(x=pareto_front[:, 0], y=pareto_front[:, 1], color='red')
+
         plt.title(name)
         plt.xlabel('Throughtput(outputs/sec)')
         plt.ylabel('DSPS %')
         if max(y[0]) > 100:
             plt.yscale("log")
         else:
-            plt.ylim([-1*0.05*max(y[0]), max(100, max(y[0]) + 0.05*max(y[0]))])
+            plt.ylim([-5, max(100, max(y[0]) + 0.1*max(y[0]))])
         if max(x) > 100:
             plt.xscale("log")
-        plt.legend(frameon=False)
+        if se_layer:
+            legd = []
+            for l in pareto:
+                legd.append(leg[l])
+            plt.legend(legd, frameon=False, prop={"size":8}, loc='upper right', bbox_to_anchor=(1.11, 1.12), borderaxespad=0.)
+        else:
+            plt.legend(frameon=False, prop={"size":8}, loc='upper right', bbox_to_anchor=(1.11, 1.12), borderaxespad=0.)
+
         file_name = name.replace('.', '_') + '.jpg'
         plt.savefig(os.path.join(dsps_dir, file_name))
         plt.clf()
     elif type == 'Memory Bandwidth':
-        sns.scatterplot(x=np.array(x), y=np.array(y[0]), hue=leg, style=leg, s=100)
+
+        sns.scatterplot(x=np.array(x), y=np.array(y[0]), hue=leg, style=leg, s=50)
+
         plt.title(name)
         plt.xlabel('Throughtput(outputs/sec)')
         plt.ylabel('Memory Bandwidth IN (GBs/sec)')
         if max(x) > 100:
             plt.xscale("log")
-        plt.legend(frameon=False)
+        plt.legend(frameon=False, prop={"size":8}, loc='upper right', bbox_to_anchor=(1.11, 1.12), borderaxespad=0.)
+
         file_name = name.replace('.', '_') + '_in.jpg'
         plt.savefig(os.path.join(mem_bw_dir, file_name))
         plt.clf()
 
-        sns.scatterplot(x=np.array(x), y=np.array(y[1]), hue=leg, style=leg, s=100)
+
+        sns.scatterplot(x=np.array(x), y=np.array(y[1]), hue=leg, style=leg, s=50)
+
         plt.title(name)
         plt.xlabel('Throughtput(outputs/sec)')
         plt.ylabel('Memory Bandwidth OUT (GBs/sec)')
         if max(x) > 100:
             plt.xscale("log")
-        plt.legend(frameon=False)
+        plt.legend(frameon=False, prop={"size":5}, loc='upper right', bbox_to_anchor=(1.05, 1.05), borderaxespad=0.)
+
         file_name = name.replace('.', '_') + '_out.jpg'
         plt.savefig(os.path.join(mem_bw_dir, file_name))
         plt.clf()
@@ -728,7 +1383,9 @@ def main():
 
         onnx_modeling.from_onnx()
 
-        onnx_modeling.get_info()
+        # onnx_modeling.get_info()
+
+        onnx_modeling.create_modules()
 
         fname = args.model_name + '_onnx'
         onnx_modeling.create_design_points(file_name=fname)
