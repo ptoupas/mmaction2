@@ -1390,7 +1390,7 @@ def main():
         fname = args.model_name + '_onnx'
         onnx_modeling.create_design_points(file_name=fname)
 
-        performance_graphs(file_name=fname, layer_to_plot=None)
+        # performance_graphs(file_name=fname, layer_to_plot=None)
 
 if __name__ == '__main__':
     main()
