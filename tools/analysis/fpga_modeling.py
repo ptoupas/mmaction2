@@ -6,11 +6,13 @@ import os
 import math
 import numpy as np
 from matplotlib import pyplot as plt
+from numpy.lib.function_base import append
 from numpy.testing._private.utils import assert_equal
 import seaborn as sns
 import coloredlogs, logging
 coloredlogs.install(level='INFO')
 from functools import reduce
+from tqdm import tqdm
 
 import pandas as pd
 import torch
@@ -23,7 +25,7 @@ from mmcv.parallel import collate, scatter
 from mmaction.apis import init_recognizer
 from mmaction.datasets.pipelines import Compose
 
-np.set_printoptions(precision=5, suppress=True)
+np.set_printoptions(precision=5, suppress=True, linewidth=120)
 
 EXCLUED_STEPS = [
     'OpenCVInit', 'OpenCVDecode', 'DecordInit', 'DecordDecode', 'PyAVInit',
@@ -32,7 +34,7 @@ EXCLUED_STEPS = [
 
 class ModelFeatureMapsOnnx():
 
-    def __init__(self, model, word_length, clock_freq, bram, dsp):
+    def __init__(self, model, word_length, clock_freq, bram, dsp, mem_bw):
         self.model_path = model + ".onnx"
         self.layers = {}
         self.modules = {}
@@ -44,6 +46,8 @@ class ModelFeatureMapsOnnx():
         self.bram_mem = 18 # Bram size is 18 Kbits or 2.25 KBytes
         self.fpga_bram = bram # each can hold a total of 18 Kbits or 2.25 KBytes
         self.fpga_dsps = dsp
+        self.mem_bandwidth = mem_bw * 1e9 # in b/s (bits per second)
+        self.max_words_per_cycle = (self.mem_bandwidth / self.wl) // self.cycles_per_sec
 
         self.op_list = ['Conv', 'BatchNormalization', 'Relu', 'GlobalAveragePool', 'AveragePool', 'MaxPool', 'Sigmoid', 'Mul', 'Add', 'Div', 'MatMul', 'Gemm', 'Elu', 'Flatten', 'GRU', 'HardSigmoid', 'LSTM', 'LeakyRelu', 'PRelu', 'RNN', 'Selu', 'Tanh', 'Celu', 'HardSwish', 'Softmax']
         self.onnx_model = onnx.load(self.model_path)
@@ -54,7 +58,9 @@ class ModelFeatureMapsOnnx():
     def balance_module_rates(self, rate_graph):
         
         rate_ratio = [ abs(rate_graph[i,i+1]/rate_graph[i,i]) for i in range(rate_graph.shape[0]) ]
-
+        # print("RATE RATIO")
+        # print(rate_ratio)
+        # print("-"*50)
         for i in range(1,rate_graph.shape[0]):
             # start from end
             layer = rate_graph.shape[0]-i
@@ -242,7 +248,11 @@ class ModelFeatureMapsOnnx():
         for k in self.layers.keys():
             logging.info("Node ({}):\n{}".format(k, self.layers[k]))
 
-    def conv_layer_config(self, module, fine, coarse_in, coarse_out):
+    def conv_layer_config(self, module, fine, coarse_in, coarse_out, s_in=1, s_out=1):
+
+        mem_bw_in = s_in
+        mem_bw_out = s_out
+
         in_shape = module['shape_in']
         din = in_shape[2]
         hin = in_shape[3]
@@ -283,21 +293,22 @@ class ModelFeatureMapsOnnx():
         else:
             rin_sw = 1
             rout_sw = (dout*hout*wout)/(din*hin*win)
-        rates_graph[0,0] = rin_sw
-        rates_graph[0,1] = rout_sw
+        rates_graph[0,0] = rin_sw * mem_bw_in
+        rates_graph[0,1] = rout_sw * mem_bw_in
 
         # Rates for the Conv module
+        # TODO: Check if we can add another layer of parallelization here above the coarse in/out. When the rate out from previous layer is greater than the rate in in conv can we parallelize more to increase the throughput further since we have the data to do it?
         rin_conv = fine/cout
         rout_conv = fine
         rates_graph[1,1] = rin_conv * coarse_out
-        rates_graph[1,2] = rout_conv * coarse_in
+        rates_graph[1,2] = rout_conv
         
         if not depthwise:
             # Rates for the Accumulator module
             rin_accum = 1
             rout_accum = 1/cin
-            rates_graph[2,2] = rin_accum
-            rates_graph[2,3] = rout_accum * coarse_in
+            rates_graph[2,2] = rin_accum * mem_bw_out
+            rates_graph[2,3] = rout_accum * coarse_in * mem_bw_out
 
             # print("CONV RATE GRAPH")
             # print(rates_graph)
@@ -330,32 +341,43 @@ class ModelFeatureMapsOnnx():
         adds = math.ceil(adds_unrl_1 * coarse_in * coarse_out) + math.ceil(adds_unrl_2 * coarse_in * coarse_out)
         return rate_in, rate_out, muls, adds, mem
 
-    def se_layer_config(self, module, coarse_in_1, coarse_out_1, coarse_in_2, coarse_out_2, fine1, fine2):
+    def se_layer_config(self, module, coarse_in_1, coarse_out_1, coarse_in_2, coarse_out_2, fine1, fine2, s_in=1, s_out=1):
+        
+        mem_bw_in = s_in
+        mem_bw_out = s_out
+
         se_keys = list(module.keys())
         glavpool_key = se_keys[3]
         conv1_key = se_keys[4]
         conv2_key = se_keys[6]
 
         in_shape = module[glavpool_key]['shape_in']
-        glavpool_rate_in = 1 # * module[conv1_key]['kernel'][1]
-        glavpool_rate_out = 1/(in_shape[2]*in_shape[3]*in_shape[4]) # * module[conv1_key]['kernel'][1]
+        glavpool_rate_in = 1 * mem_bw_in
+        glavpool_rate_out = 1/(in_shape[2]*in_shape[3]*in_shape[4]) * mem_bw_in
         glavpool_mem = in_shape[1]
-        glavpool_muls = 2
+        glavpool_muls = 2 * mem_bw_in
 
-        conv1_rate_in, conv1_rate_out, conv1_muls, conv1_adds, conv1_mem = self.conv_layer_config(module[conv1_key], coarse_in_1, coarse_out_1, fine1)
+        conv1_rate_in, conv1_rate_out, conv1_muls, conv1_adds, conv1_mem = self.conv_layer_config(module[conv1_key], coarse_in_1, coarse_out_1, fine1, s_in=glavpool_rate_out, s_out=1)
 
-        relu_rate_in = 1
-        relu_rate_out = 1
+        relu_rate_in = conv1_rate_out
+        relu_rate_out = conv1_rate_out
 
-        conv2_rate_in, conv2_rate_out, conv2_muls, conv2_adds, conv2_mem = self.conv_layer_config(module[conv2_key], coarse_in_2, coarse_out_2, fine2)
+        conv2_rate_in, conv2_rate_out, conv2_muls, conv2_adds, conv2_mem = self.conv_layer_config(module[conv2_key], coarse_in_2, coarse_out_2, fine2, s_in=relu_rate_out, s_out=1)
 
-        sigmoid_rate_in = 1
-        sigmoid_rate_out = 1
-        sigmoid_dsps = 3
-
-        elemwise_mul_rate_in = 1
-        elemwise_mul_rate_out = 1
-        elemwise_mul_rate_dsps = 1
+        #TODO: Should better handle this case. Use a number of streams for example same as the coarse out of previous layer if this can help us with the overal rate of the whole layer.
+        sigmoid_rate_in = max(1, conv2_rate_out)
+        sigmoid_rate_out = max(1, conv2_rate_out)
+        sigmoid_dsps = max(3, math.ceil(3 * conv2_rate_out))
+        
+        #TODO: Same as above.
+        if sigmoid_rate_out > 1:
+            elemwise_mul_rate_in = 1 * mem_bw_out
+            elemwise_mul_rate_out = 1 * mem_bw_out
+            elemwise_mul_rate_dsps = 1 * mem_bw_out
+        else:
+            elemwise_mul_rate_in = 1
+            elemwise_mul_rate_out = 1
+            elemwise_mul_rate_dsps = 1 
 
         rates_graph = np.zeros( shape=(6,7) , dtype=float )
         rates_graph[0,0] = glavpool_rate_in
@@ -374,7 +396,7 @@ class ModelFeatureMapsOnnx():
         rates_graph[4,5] = sigmoid_rate_out
 
         rates_graph[5,5] = elemwise_mul_rate_in
-        rates_graph[5,6] = elemwise_mul_rate_out
+        rates_graph[5,6] = elemwise_mul_rate_out 
         
         # print("SE RATE GRAPH")
         # print(rates_graph)
@@ -636,7 +658,7 @@ class ModelFeatureMapsOnnx():
         else:
             logging.error("Design point dropped because of too many recourses needed. DSPS = {} ({}%). BRAM = {} ({}%)".format(dsps, dsps_util, mem_bram, mem_util))
 
-    def create_design_points(self, file_name):
+    def create_design_points(self, file_name, s_in=1, s_out=1):
             if not os.path.exists(os.path.join(os.getcwd(), 'fpga_modeling_reports')):
                 os.makedirs(os.path.join(os.getcwd(), 'fpga_modeling_reports'))
             csv_file = os.path.join(os.getcwd(), 'fpga_modeling_reports', file_name + '.csv')
@@ -699,7 +721,7 @@ class ModelFeatureMapsOnnx():
 
                                     logging.warning("Fold = {}. Channels In = {} - Filters = {}".format(folding_name, cin, cout))
 
-                                    rate_in, rate_out, muls, adds, mem = self.conv_layer_config(self.modules[name], fine, coarse_in, coarse_out)
+                                    rate_in, rate_out, muls, adds, mem = self.conv_layer_config(self.modules[name], fine, coarse_in, coarse_out, s_in=s_in, s_out=s_out)
 
                                     # logging.error("Fold = {}. rate IN = {}. rate OUT = {}".format(folding_name, rate_in, rate_out))
 
@@ -711,19 +733,20 @@ class ModelFeatureMapsOnnx():
                         dout = out_shape[2]
                         hout = out_shape[3]
                         wout = out_shape[4]
-                        out_size = int(np.prod(np.array(out_shape)))
+                        out_size = int(np.prod(np.array(out_shape[1:])))
 
                         in_shape = self.modules[name]['shape_in']
                         cin = in_shape[1]
                         din = in_shape[2]
                         hin = in_shape[3]
                         win = in_shape[4]
-                        in_size = int(np.prod(np.array(in_shape)))
+                        in_size = int(np.prod(np.array(in_shape[1:])))
 
                         assert out_shape == in_shape, 'Input and output shapes bust be identical in BatchNormalization Layer'
 
                         # coarse_config = list(reduce(list.__add__, ([i, cin//i] for i in range(1, int(cin**0.5) + 1) if cin % i == 0)))
-                        coarse_config = [1, cin//4, cin//2, cin]
+                        # coarse_config = [1, cin//4, cin//2, cin]
+                        coarse_config = [cin//4]
                         coarse_config = np.unique(coarse_config)
                         coarse_config = coarse_config[np.nonzero(coarse_config)].tolist()
 
@@ -746,18 +769,20 @@ class ModelFeatureMapsOnnx():
                         dout = out_shape[2]
                         hout = out_shape[3]
                         wout = out_shape[4]
-                        out_size = int(np.prod(np.array(out_shape)))
+                        out_size = int(np.prod(np.array(out_shape[1:])))
 
                         in_shape = self.modules[name]['shape_in']
                         cin = in_shape[1]
                         din = in_shape[2]
                         hin = in_shape[3]
                         win = in_shape[4]
-                        in_size = int(np.prod(np.array(in_shape)))
+                        in_size = int(np.prod(np.array(in_shape[1:])))
 
                         assert out_shape == in_shape, 'Input and output shapes bust be identical in BatchNormalization Layer'
 
                         # coarse_config = list(reduce(list.__add__, ([i, cin//i] for i in range(1, int(cin**0.5) + 1) if cin % i == 0)))
+                        # coarse_config = [1, cin//4, cin//2, cin]
+                        coarse_config = [cin//4]
                         coarse_config = np.unique(coarse_config)
                         coarse_config = coarse_config[np.nonzero(coarse_config)].tolist()
                         
@@ -780,18 +805,20 @@ class ModelFeatureMapsOnnx():
                         dout = out_shape[2]
                         hout = out_shape[3]
                         wout = out_shape[4]
-                        out_size = int(np.prod(np.array(out_shape)))
+                        out_size = int(np.prod(np.array(out_shape[1:])))
 
                         in_shape = self.modules[name]['shape_in']
                         cin = in_shape[1]
                         din = in_shape[2]
                         hin = in_shape[3]
                         win = in_shape[4]
-                        in_size = int(np.prod(np.array(in_shape)))
+                        in_size = int(np.prod(np.array(in_shape[1:])))
 
                         assert cin == cout, 'Input and output shapes bust be identical in BatchNormalization Layer'
 
                         # coarse_config = list(reduce(list.__add__, ([i, cin//i] for i in range(1, int(cin**0.5) + 1) if cin % i == 0)))
+                        # coarse_config = [1, cin//4, cin//2, cin]
+                        coarse_config = [cin//4]
                         coarse_config = np.unique(coarse_config)
                         coarse_config = coarse_config[np.nonzero(coarse_config)].tolist()
 
@@ -875,18 +902,22 @@ class ModelFeatureMapsOnnx():
                                     for coarse_out_2 in coarse_out_config_conv2:
                                         for fine_1 in fine_config_1:
                                             for fine_2 in fine_config_2:
-                                                if not coarse_out_1 == coarse_in_2:
-                                                    logging.error("Skipping configuration N_Coarse_1({}/{}) - N_Coarse_2({}/{}) - f_Fine_1({}) - f_Fine_2({}) since N_Coarse_1 out ({}) does not match with N_Coarse_2 in ({}).".format(coarse_in_1, coarse_out_1, coarse_in_2, coarse_out_2, fine_1, fine_2, coarse_out_1, coarse_in_2))
-                                                    continue
+                                                # if not coarse_out_1 == coarse_in_2:
+                                                #     logging.error("Skipping configuration N_Coarse_1({}/{}) - N_Coarse_2({}/{}) - f_Fine_1({}) - f_Fine_2({}) since N_Coarse_1 out ({}) does not match with N_Coarse_2 in ({}).".format(coarse_in_1, coarse_out_1, coarse_in_2, coarse_out_2, fine_1, fine_2, coarse_out_1, coarse_in_2))
+                                                #     continue
 
                                                 folding_name = "N_Coarse_1({}/{}) - N_Coarse_2({}/{}) - f_Fine_1({:.2f}) - f_Fine_2({:.2f})".format(coarse_in_1, coarse_out_1, coarse_in_2, coarse_out_2, fine_1, fine_2)
                                                 
                                                 logging.warning("Fold = {}".format(folding_name))
-
-                                                rate_in, rate_out, muls, adds, mem = self.se_layer_config(self.modules[name], coarse_in_1, coarse_out_1, coarse_in_2, coarse_out_2, fine_1, fine_2)
+                                                
+                                                #TODO:the input mem bw on this layer is very important so we add the 9/10 of the total bw as the input bw and only the 1/10 as the output bw. When this layer is combined with others in a bigger partition the input rate of this layer will be driven by the output rate of the previous on the graph.
+                                                rate_in, rate_out, muls, adds, mem = self.se_layer_config(self.modules[name], coarse_in_1, coarse_out_1, coarse_in_2, coarse_out_2, fine_1, fine_2, s_in=s_in+s_out-1, s_out=1)
                                                 # logging.error("Fold = {}. rate IN = {}. rate OUT = {}".format(folding_name, rate_in, rate_out))
 
-                                                self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem)
+                                                #TODO: Added worst possible case for buffering on se module i.e., buffer the whole feature map and all of the channels. Should fix this by checking the depth/latency of the left branch in order to calculate the exact buffering that is gonna needed in each se module.
+                                                #TODO: Another solution is to read again from off-chip memory which will prevent the buffering i.e., reduce the BRAM needs BUT will reduce the mem bw in total as well since we need to first write the results (in a bigger layer-wise partition) and the read them again i.e., will probably need to have mem_bw / 4 instead of mem_bw / 2 in each point that we access the off-chip memory.
+                                                branch_buffering = din * hin * win
+                                                self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem + branch_buffering)
 
                     elif operation == 'Swish':
                         out_shape = self.modules[name]['shape_out']
@@ -894,18 +925,20 @@ class ModelFeatureMapsOnnx():
                         dout = out_shape[2]
                         hout = out_shape[3]
                         wout = out_shape[4]
-                        out_size = int(np.prod(np.array(out_shape)))
+                        out_size = int(np.prod(np.array(out_shape[1:])))
 
                         in_shape = self.modules[name]['shape_in']
                         cin = in_shape[1]
                         din = in_shape[2]
                         hin = in_shape[3]
                         win = in_shape[4]
-                        in_size = int(np.prod(np.array(in_shape)))
+                        in_size = int(np.prod(np.array(in_shape[1:])))
 
                         assert out_shape == in_shape, 'Input and output shapes bust be identical in BatchNormalization Layer'
 
                         # coarse_config = list(reduce(list.__add__, ([i, cin//i] for i in range(1, int(cin**0.5) + 1) if cin % i == 0)))
+                        # coarse_config = [1, cin//4, cin//2, cin]
+                        coarse_config = [cin//4]
                         coarse_config = np.unique(coarse_config)
                         coarse_config = coarse_config[np.nonzero(coarse_config)].tolist()
 
@@ -922,8 +955,271 @@ class ModelFeatureMapsOnnx():
                             logging.warning("Fold = {}. Channels In = {} - Filters = {}".format(folding_name, cin, cout))
 
                             self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem)
-
+                    #TODO: Should add the ADD layer aswell
                     csv_writer.writerow(["-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"])
+
+    def compose_layers(self, file_name, layers_names, final_name):
+        l_configs = {}
+        for l in layers_names:
+            l_configs[l] = []
+
+            csv_file = os.path.join(os.getcwd(), 'fpga_modeling_reports', file_name + '.csv')
+            with open(csv_file, mode='r') as model_results:
+                csv_reader = csv.reader(model_results, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+
+                cols = {}
+                for i, c in enumerate(next(csv_reader)):
+                    cols[c] = i
+
+                for i, row in enumerate(csv_reader):
+                    if "-" in row :
+                        continue
+
+                    if row[cols['Layer']] == l:
+                        l_configs[l].append([row[cols['Folding']], row[cols['On-Chip Memory(BRAM %)']], row[cols['DSPS %']], row[cols['Consumption(inputs/sec)']], row[cols['Throughtput(outputs/sec)']], row[cols['Memory Bandwidth In(words/cycle)']], row[cols['Memory Bandwidth Out(words/cycle)']]])
+        
+        sizes = []
+        keys = []
+        for k in l_configs.keys():
+            sizes.append(len(l_configs[k]))
+            keys.append(k)
+        
+        dsp_config = []
+        bram_config = []
+        throughput_config = []
+        if len(sizes) == 11:
+            with tqdm(total=int(np.prod(np.array(sizes)))) as pbar:
+                for c1 in tqdm(range(sizes[0]), leave=False):
+                    for b1 in tqdm(range(sizes[1]), leave=False):
+                        for r1 in tqdm(range(sizes[2]), leave=False):
+                            for c2 in tqdm(range(sizes[3]), leave=False):
+                                for b2 in tqdm(range(sizes[4]), leave=False):
+                                    for se1 in tqdm(range(sizes[5]), leave=False):
+                                        for sw1 in tqdm(range(sizes[6]), leave=False):
+                                            for c3 in tqdm(range(sizes[7]), leave=False):
+                                                for b3 in tqdm(range(sizes[8]), leave=False):
+                                                    for c4 in tqdm(range(sizes[9]), leave=False):
+                                                        for b4 in tqdm(range(sizes[10]), leave=False):
+                                                            pbar.update(1)
+                                                            rates_graph = np.zeros( shape=(11,12) , dtype=float )
+
+                                                            rates_graph[0,0] = float(l_configs[keys[0]][c1][5])
+                                                            rates_graph[0,1] = float(l_configs[keys[0]][c1][6])
+
+                                                            rates_graph[1,1] = float(l_configs[keys[1]][b1][5])
+                                                            rates_graph[1,2] = float(l_configs[keys[1]][b1][6])
+
+                                                            rates_graph[2,2] = float(l_configs[keys[2]][r1][5])
+                                                            rates_graph[2,3] = float(l_configs[keys[2]][r1][6])
+
+                                                            rates_graph[3,3] = float(l_configs[keys[3]][c2][5])
+                                                            rates_graph[3,4] = float(l_configs[keys[3]][c2][6])
+
+                                                            rates_graph[4,4] = float(l_configs[keys[4]][b2][5])
+                                                            rates_graph[4,5] = float(l_configs[keys[4]][b2][6])
+
+                                                            rates_graph[5,5] = float(l_configs[keys[5]][se1][5])
+                                                            rates_graph[5,6] = float(l_configs[keys[5]][se1][6])
+
+                                                            rates_graph[6,6] = float(l_configs[keys[6]][sw1][5])
+                                                            rates_graph[6,7] = float(l_configs[keys[6]][sw1][6])
+
+                                                            rates_graph[7,7] = float(l_configs[keys[7]][c3][5])
+                                                            rates_graph[7,8] = float(l_configs[keys[7]][c3][6])
+
+                                                            rates_graph[8,8] = float(l_configs[keys[8]][b3][5])
+                                                            rates_graph[8,9] = float(l_configs[keys[8]][b3][6])
+
+                                                            rates_graph[9,9] = float(l_configs[keys[9]][c4][5])
+                                                            rates_graph[9,10] = float(l_configs[keys[9]][c4][6])
+
+                                                            rates_graph[10,10] = float(l_configs[keys[10]][b4][5])
+                                                            rates_graph[10,11] = float(l_configs[keys[10]][b4][6])
+
+                                                            bram_total = float(l_configs[keys[0]][c1][1]) + float(l_configs[keys[1]][b1][1]) + float(l_configs[keys[2]][r1][1]) + float(l_configs[keys[3]][c2][1]) + float(l_configs[keys[4]][b2][1]) + float(l_configs[keys[5]][se1][1]) + float(l_configs[keys[6]][sw1][1]) + float(l_configs[keys[7]][c3][1]) + float(l_configs[keys[8]][b3][1]) + float(l_configs[keys[9]][c4][1]) + float(l_configs[keys[10]][b4][1])
+
+                                                            dsps_total = float(l_configs[keys[0]][c1][2]) + float(l_configs[keys[1]][b1][2]) + float(l_configs[keys[2]][r1][2])+ float(l_configs[keys[3]][c2][2]) + float(l_configs[keys[4]][b2][2]) + float(l_configs[keys[5]][se1][2]) + float(l_configs[keys[6]][sw1][2]) + float(l_configs[keys[7]][c3][2]) + float(l_configs[keys[8]][b3][2]) + float(l_configs[keys[9]][c4][2]) + float(l_configs[keys[10]][b4][2])
+
+                                                            rates_graph_balanced = np.copy(rates_graph)
+                                                            rates_graph_balanced = self.balance_module_rates(rates_graph_balanced)
+
+                                                            rate_in = abs(rates_graph_balanced[0,0])
+                                                            rate_out = abs(rates_graph_balanced[10,11])
+                                                            
+                                                            if len(keys[0].split("_PointWise")) > 1:
+                                                                in_key = keys[0].split("_PointWise")[0]
+                                                            elif len(keys[0].split("_DepthWise")) > 1:
+                                                                in_key = keys[0].split("_DepthWise")
+                                                            else:
+                                                                in_key = keys[0]
+                                                            in_shape = self.modules[in_key]['shape_in']
+                                                            in_size = int(np.prod(np.array(in_shape[1:])))
+                                                            out_shape = self.modules[keys[10]]['shape_out']
+                                                            out_size = int(np.prod(np.array(out_shape[1:])))
+
+                                                            thr_in = (self.cycles_per_sec*rate_in)/in_size
+                                                            thr_out = (self.cycles_per_sec*rate_out)/out_size
+
+                                                            dsp_config.append(dsps_total)
+                                                            bram_config.append(bram_total)
+                                                            throughput_config.append(thr_out)
+        elif len(sizes) == 9:
+            with tqdm(total=int(np.prod(np.array(sizes)))) as pbar:
+                for c1 in tqdm(range(sizes[0]), leave=False):
+                    for b1 in tqdm(range(sizes[1]), leave=False):
+                        for r1 in tqdm(range(sizes[2]), leave=False):
+                            for c2 in tqdm(range(sizes[3]), leave=False):
+                                for b2 in tqdm(range(sizes[4]), leave=False):
+                                    for se1 in tqdm(range(sizes[5]), leave=False):
+                                        for sw1 in tqdm(range(sizes[6]), leave=False):
+                                            for c3 in tqdm(range(sizes[7]), leave=False):
+                                                for b3 in tqdm(range(sizes[8]), leave=False):
+
+                                                            pbar.update(1)
+                                                            rates_graph = np.zeros( shape=(9,10) , dtype=float )
+
+                                                            rates_graph[0,0] = float(l_configs[keys[0]][c1][5])
+                                                            rates_graph[0,1] = float(l_configs[keys[0]][c1][6])
+
+                                                            rates_graph[1,1] = float(l_configs[keys[1]][b1][5])
+                                                            rates_graph[1,2] = float(l_configs[keys[1]][b1][6])
+
+                                                            rates_graph[2,2] = float(l_configs[keys[2]][r1][5])
+                                                            rates_graph[2,3] = float(l_configs[keys[2]][r1][6])
+
+                                                            rates_graph[3,3] = float(l_configs[keys[3]][c2][5])
+                                                            rates_graph[3,4] = float(l_configs[keys[3]][c2][6])
+
+                                                            rates_graph[4,4] = float(l_configs[keys[4]][b2][5])
+                                                            rates_graph[4,5] = float(l_configs[keys[4]][b2][6])
+
+                                                            rates_graph[5,5] = float(l_configs[keys[5]][se1][5])
+                                                            rates_graph[5,6] = float(l_configs[keys[5]][se1][6])
+
+                                                            rates_graph[6,6] = float(l_configs[keys[6]][sw1][5])
+                                                            rates_graph[6,7] = float(l_configs[keys[6]][sw1][6])
+
+                                                            rates_graph[7,7] = float(l_configs[keys[7]][c3][5])
+                                                            rates_graph[7,8] = float(l_configs[keys[7]][c3][6])
+
+                                                            rates_graph[8,8] = float(l_configs[keys[8]][b3][5])
+                                                            rates_graph[8,9] = float(l_configs[keys[8]][b3][6])
+
+
+                                                            bram_total = float(l_configs[keys[0]][c1][1]) + float(l_configs[keys[1]][b1][1]) + float(l_configs[keys[2]][r1][1]) + float(l_configs[keys[3]][c2][1]) + float(l_configs[keys[4]][b2][1]) + float(l_configs[keys[5]][se1][1]) + float(l_configs[keys[6]][sw1][1]) + float(l_configs[keys[7]][c3][1]) + float(l_configs[keys[8]][b3][1])
+
+                                                            dsps_total = float(l_configs[keys[0]][c1][2]) + float(l_configs[keys[1]][b1][2]) + float(l_configs[keys[2]][r1][2])+ float(l_configs[keys[3]][c2][2]) + float(l_configs[keys[4]][b2][2]) + float(l_configs[keys[5]][se1][2]) + float(l_configs[keys[6]][sw1][2]) + float(l_configs[keys[7]][c3][2]) + float(l_configs[keys[8]][b3][2])
+
+                                                            rates_graph_balanced = np.copy(rates_graph)
+                                                            rates_graph_balanced = self.balance_module_rates(rates_graph_balanced)
+
+                                                            rate_in = abs(rates_graph_balanced[0,0])
+                                                            rate_out = abs(rates_graph_balanced[8,9])
+                                                            
+                                                            if len(keys[0].split("_PointWise")) > 1:
+                                                                in_key = keys[0].split("_PointWise")[0]
+                                                            elif len(keys[0].split("_DepthWise")) > 1:
+                                                                in_key = keys[0].split("_DepthWise")
+                                                            else:
+                                                                in_key = keys[0]
+                                                            in_shape = self.modules[in_key]['shape_in']
+                                                            in_size = int(np.prod(np.array(in_shape[1:])))
+                                                            out_shape = self.modules[keys[8]]['shape_out']
+                                                            out_size = int(np.prod(np.array(out_shape[1:])))
+
+                                                            thr_in = (self.cycles_per_sec*rate_in)/in_size
+                                                            thr_out = (self.cycles_per_sec*rate_out)/out_size
+
+                                                            dsp_config.append(dsps_total)
+                                                            bram_config.append(bram_total)
+                                                            throughput_config.append(thr_out)
+        elif len(sizes) == 8:
+            with tqdm(total=int(np.prod(np.array(sizes)))) as pbar:
+                for c1 in tqdm(range(sizes[0]), leave=False):
+                    for b1 in tqdm(range(sizes[1]), leave=False):
+                        for r1 in tqdm(range(sizes[2]), leave=False):
+                            for c2 in tqdm(range(sizes[3]), leave=False):
+                                for b2 in tqdm(range(sizes[4]), leave=False):
+                                    for se1 in tqdm(range(sizes[5]), leave=False):
+                                        for sw1 in tqdm(range(sizes[6]), leave=False):
+                                            for c3 in tqdm(range(sizes[7]), leave=False):
+
+                                                            pbar.update(1)
+                                                            rates_graph = np.zeros( shape=(8,9) , dtype=float )
+
+                                                            rates_graph[0,0] = float(l_configs[keys[0]][c1][5])
+                                                            rates_graph[0,1] = float(l_configs[keys[0]][c1][6])
+
+                                                            rates_graph[1,1] = float(l_configs[keys[1]][b1][5])
+                                                            rates_graph[1,2] = float(l_configs[keys[1]][b1][6])
+
+                                                            rates_graph[2,2] = float(l_configs[keys[2]][r1][5])
+                                                            rates_graph[2,3] = float(l_configs[keys[2]][r1][6])
+
+                                                            rates_graph[3,3] = float(l_configs[keys[3]][c2][5])
+                                                            rates_graph[3,4] = float(l_configs[keys[3]][c2][6])
+
+                                                            rates_graph[4,4] = float(l_configs[keys[4]][b2][5])
+                                                            rates_graph[4,5] = float(l_configs[keys[4]][b2][6])
+
+                                                            rates_graph[5,5] = float(l_configs[keys[5]][se1][5])
+                                                            rates_graph[5,6] = float(l_configs[keys[5]][se1][6])
+
+                                                            rates_graph[6,6] = float(l_configs[keys[6]][sw1][5])
+                                                            rates_graph[6,7] = float(l_configs[keys[6]][sw1][6])
+
+                                                            rates_graph[7,7] = float(l_configs[keys[7]][c3][5])
+                                                            rates_graph[7,8] = float(l_configs[keys[7]][c3][6])
+
+
+                                                            bram_total = float(l_configs[keys[0]][c1][1]) + float(l_configs[keys[1]][b1][1]) + float(l_configs[keys[2]][r1][1]) + float(l_configs[keys[3]][c2][1]) + float(l_configs[keys[4]][b2][1]) + float(l_configs[keys[5]][se1][1]) + float(l_configs[keys[6]][sw1][1]) + float(l_configs[keys[7]][c3][1])
+
+                                                            dsps_total = float(l_configs[keys[0]][c1][2]) + float(l_configs[keys[1]][b1][2]) + float(l_configs[keys[2]][r1][2])+ float(l_configs[keys[3]][c2][2]) + float(l_configs[keys[4]][b2][2]) + float(l_configs[keys[5]][se1][2]) + float(l_configs[keys[6]][sw1][2]) + float(l_configs[keys[7]][c3][2])
+
+                                                            rates_graph_balanced = np.copy(rates_graph)
+                                                            rates_graph_balanced = self.balance_module_rates(rates_graph_balanced)
+
+                                                            rate_in = abs(rates_graph_balanced[0,0])
+                                                            rate_out = abs(rates_graph_balanced[7,8])
+                                                            
+                                                            if len(keys[0].split("_PointWise")) > 1:
+                                                                in_key = keys[0].split("_PointWise")[0]
+                                                            elif len(keys[0].split("_DepthWise")) > 1:
+                                                                in_key = keys[0].split("_DepthWise")
+                                                            else:
+                                                                in_key = keys[0]
+                                                            in_shape = self.modules[in_key]['shape_in']
+                                                            in_size = int(np.prod(np.array(in_shape[1:])))
+                                                            out_shape = self.modules[keys[7]]['shape_out']
+                                                            out_size = int(np.prod(np.array(out_shape[1:])))
+
+                                                            thr_in = (self.cycles_per_sec*rate_in)/in_size
+                                                            thr_out = (self.cycles_per_sec*rate_out)/out_size
+
+                                                            dsp_config.append(dsps_total)
+                                                            bram_config.append(bram_total)
+                                                            throughput_config.append(thr_out)
+
+        scores = np.zeros((len(throughput_config), 2))
+        scores[:,0] = throughput_config
+        scores[:,1] = dsp_config
+        pareto = find_pareto(scores)
+        pareto_front = scores[pareto]
+
+        pareto_front_df = pd.DataFrame(pareto_front)
+        pareto_front_df.sort_values(0, inplace=True)
+        pareto_front = pareto_front_df.values
+        
+        sns.scatterplot(x=throughput_config, y=dsp_config, s=50)
+        sns.lineplot(x=pareto_front[:, 0], y=pareto_front[:, 1], color='red')
+        bram_tot = "{:.3f}".format(max(bram_config))
+                
+        plt.title(final_name + " (" + bram_tot + " % BRAM Usage)")
+        plt.xlabel('Throughtput(outputs/sec)')
+        plt.xscale("log")
+        plt.ylabel('DSPS %')
+        plt.savefig("/home/petros/Development/HAR_NN/mmaction2/fpga_modeling_reports/graphs/" + final_name + ".png")
+        plt.clf()
 
 class ModelFeatureMaps():
     def __init__(self, model, word_length, clock_freq, bram, dsp):
@@ -1298,6 +1594,67 @@ def performance_graphs(file_name="x3d_m", layer_to_plot=None):
         plot_graph(throughput, [dsp_util], folding, prev_layer, 'DSPS', file_name)
         plot_graph(throughput, [mem_bw_in, mem_bw_out], folding, prev_layer, 'Memory Bandwidth', file_name)
 
+def get_paretto(file_name="x3d_m"):
+    
+    csv_file_par = os.path.join(os.getcwd(), 'fpga_modeling_reports', file_name + '_pareto.csv')
+    with open(csv_file_par, mode='w') as pareto_results:
+        csv_writer_par = csv.writer(pareto_results, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+
+        csv_writer_par.writerow(["Layer", "Folding", "On-Chip Memory(BRAM %)", "DSPS %", "Consumption(inputs/sec)", "Throughtput(outputs/sec)", "Memory Bandwidth In(words/cycle)", "Memory Bandwidth Out(words/cycle)", "On-Chip Memory(KB)", "On-Chip Memory(BRAM)", "Memory Bandwidth In(GBs/sec)", "Memory Bandwidth Out(GBs/sec)", "Multipliers", "Adders", "DSPS", "Throughtput(words/cycle)", "Throughtput(GOps/sec)"])
+
+        csv_file = os.path.join(os.getcwd(), 'fpga_modeling_reports', file_name + '.csv')
+        with open(csv_file, mode='r') as model_results:
+            csv_reader = csv.reader(model_results, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+
+            cols = {}
+            for i, c in enumerate(next(csv_reader)):
+                cols[c] = i
+            print(cols)
+
+            rows = []
+
+            first_layer = True
+            for i, row in enumerate(csv_reader):
+                if "-" in row :
+                    continue
+
+                if first_layer and i == 0:
+                    prev_layer = row[cols['Layer']]
+                    first_layer = False
+
+                if row[cols['Layer']] == prev_layer:
+                    rows.append(row)
+                else:
+
+                    through = [r[5] for r in rows]
+                    dsps = [r[3] for r in rows]
+
+                    scores = np.zeros((len(through), 2))
+                    scores[:,0] = through
+                    scores[:,1] = dsps
+                    pareto = find_pareto(scores)
+                    
+                    for p in pareto:
+                        csv_writer_par.writerow(rows[p])
+                    csv_writer_par.writerow(["-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"])
+                    rows.clear()
+                    
+                    rows.append(row)
+
+                prev_layer = row[cols['Layer']]
+
+            through = [r[5] for r in rows]
+            dsps = [r[3] for r in rows]
+
+            scores = np.zeros((len(through), 2))
+            scores[:,0] = through
+            scores[:,1] = dsps
+            pareto = find_pareto(scores)
+            
+            for p in pareto:
+                csv_writer_par.writerow(rows[p])
+            csv_writer_par.writerow(["-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"])
+
 def parse_args():
     parser = argparse.ArgumentParser(description='MMAction2 parse model')
     parser.add_argument('model_name', help='name of the har model')
@@ -1379,7 +1736,8 @@ def main():
         # Target FPGA Zynq UltraScale+ MPSoC ZCU104. Assuming clock frequency of 100 MHz.
         # The actual BRAM size is 11 Mbits (1.375 MBytes). This divided by the 18 Kbits size of each BRAM gives a total of 624 BRAM units.
         # The ZCU104 has also 27 Mbits (3.375 MBytes) of URAM. This divided by the 288 Kbits size of each URAM gives a total of 96 URAM units.
-        onnx_modeling = ModelFeatureMapsOnnx(model=args.model_name, word_length=16, clock_freq=100, bram=624, dsp=1728)
+        # The ZCU104 has 20 GTH gigabit transceivers (16.3 Gb/s or 2.03 GB/s) on the PL-size
+        onnx_modeling = ModelFeatureMapsOnnx(model=args.model_name, word_length=16, clock_freq=100, bram=624, dsp=1728, mem_bw=16.3)
 
         onnx_modeling.from_onnx()
 
@@ -1388,9 +1746,35 @@ def main():
         onnx_modeling.create_modules()
 
         fname = args.model_name + '_onnx'
-        onnx_modeling.create_design_points(file_name=fname)
+        onnx_modeling.create_design_points(file_name=fname, s_in=onnx_modeling.max_words_per_cycle//2, s_out=onnx_modeling.max_words_per_cycle//2)
 
         # performance_graphs(file_name=fname, layer_to_plot=None)
+
+        get_paretto(file_name=fname)
+
+        # exit()
+
+        fname_pareto = fname + "_pareto"
+
+        #TODO: (URGENT) Automatically create all of the layers in the model and extract the corresponding graphs.
+        #TODO: (URGENT) Take into consideration the buffering needed in branching or read again from the off-chip memory and reduce the bw in the individual layers.
+        # 11 Modules. With Downsampling residual.
+        layers_1_0 = ["Conv_24_PointWise", "BatchNormalization_25", "Relu_26", "Conv_27_DepthWise", "BatchNormalization_28", "Se_29", "Swish_35", "Conv_37_PointWise", "BatchNormalization_38", "Conv_39_PointWise", "BatchNormalization_40"]
+        layer_3_0 = ["Conv_146_PointWise", "BatchNormalization_147", "Relu_148", "Conv_149_DepthWise", "BatchNormalization_150", "Se_151", "Swish_157", "Conv_159_PointWise", "BatchNormalization_160", "Conv_161_PointWise", "BatchNormalization_162"]
+
+        # 9 Modules.
+        layers_2_4 = ["Conv_129_PointWise", "BatchNormalization_130", "Relu_131", "Conv_132_DepthWise", "BatchNormalization_133", "Se_134", "Swish_140", "Conv_142_PointWise", "BatchNormalization_143"]
+        layers_4_4 = ["Conv_363_PointWise", "BatchNormalization_364", "Relu_365", "Conv_366_DepthWise", "BatchNormalization_367", "Se_368", "Swish_374", "Conv_376_PointWise", "BatchNormalization_377"]
+
+        # 8 Modules. No SE.
+        layers_1_1 = ["Conv_43_PointWise", "BatchNormalization_44", "Relu_45", "Conv_46_DepthWise", "BatchNormalization_47", "Swish_48", "Conv_50_PointWise", "BatchNormalization_51"]
+        layer_3_1 = ["Conv_165_PointWise", "BatchNormalization_166", "Relu_167", "Conv_168_DepthWise", "BatchNormalization_169", "Swish_170", "Conv_172_PointWise", "BatchNormalization_173"]
+
+        layers_names = ["layers_1_0", "layer_3_0", "layers_2_4", "layers_4_4", "layers_1_1", "layer_3_1"]
+        layers = [layers_1_0, layer_3_0, layers_2_4, layers_4_4, layers_1_1, layer_3_1]
+
+        for l, n in zip(layers, layers_names):
+            onnx_modeling.compose_layers(fname_pareto, l, n)
 
 if __name__ == '__main__':
     main()

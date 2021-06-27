@@ -125,3 +125,6 @@ work_dirs/
 !tests/data/**/*.pkl.json
 !tests/data/**/*.log.json
 !tests/data/**/*.pth
+fpga_modeling_reports/
+i3d.onnx
+x3d_m.onnx
