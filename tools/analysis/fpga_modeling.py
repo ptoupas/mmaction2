@@ -694,10 +694,10 @@ class ModelFeatureMapsOnnx():
                         out_size = cout * dout * hout * wout
 
                         pr_name = name
-                        if cout == self.modules[name]['groups']:
-                            pr_name = pr_name + "_DepthWise"
-                        if kd == 1 and kh == 1 and kw == 1:
-                            pr_name = pr_name + "_PointWise"
+                        # if cout == self.modules[name]['groups']:
+                        #     pr_name = pr_name + "_DepthWise"
+                        # if kd == 1 and kh == 1 and kw == 1:
+                        #     pr_name = pr_name + "_PointWise"
 
                         coarse_in_config = [1, (cin * self.modules[name]['groups'])//4, (cin * self.modules[name]['groups'])//2, cin * self.modules[name]['groups']]
                         coarse_in_config = np.unique(coarse_in_config)
@@ -722,8 +722,6 @@ class ModelFeatureMapsOnnx():
                                     logging.warning("Fold = {}. Channels In = {} - Filters = {}".format(folding_name, cin, cout))
 
                                     rate_in, rate_out, muls, adds, mem = self.conv_layer_config(self.modules[name], fine, coarse_in, coarse_out, s_in=s_in, s_out=s_out)
-
-                                    # logging.error("Fold = {}. rate IN = {}. rate OUT = {}".format(folding_name, rate_in, rate_out))
 
                                     self.model_layer(pr_name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem)
 
@@ -872,12 +870,7 @@ class ModelFeatureMapsOnnx():
                         coarse_out_config_conv2 = [1, coarse_out_conv2//4, coarse_out_conv2//2, coarse_out_conv2]
                         coarse_out_config_conv2 = np.unique(coarse_out_config_conv2)
                         coarse_out_config_conv2 = coarse_out_config_conv2[np.nonzero(coarse_out_config_conv2)].tolist()
-
-                        # coarse_in_config_conv1 = [1, coarse_in_conv1]
-                        # coarse_in_config_conv2 = [1, coarse_in_conv2]
-                        # coarse_out_config_conv1 = [1, coarse_out_conv1]
-                        # coarse_out_config_conv2 = [1, coarse_out_conv2]
-                        
+                      
                         kd_1 = self.modules[name][conv1_key]['kernel'][2]
                         kh_1 = self.modules[name][conv1_key]['kernel'][3]
                         kw_1 = self.modules[name][conv1_key]['kernel'][4]
@@ -910,9 +903,8 @@ class ModelFeatureMapsOnnx():
                                                 
                                                 logging.warning("Fold = {}".format(folding_name))
                                                 
-                                                #TODO:the input mem bw on this layer is very important so we add the 9/10 of the total bw as the input bw and only the 1/10 as the output bw. When this layer is combined with others in a bigger partition the input rate of this layer will be driven by the output rate of the previous on the graph.
+                                                #TODO: The input mem bw on this layer is very important so we add the 9/10 of the total bw as the input bw and only the 1/10 as the output bw. When this layer is combined with others in a bigger partition the input rate of this layer will be driven by the output rate of the previous on the graph.
                                                 rate_in, rate_out, muls, adds, mem = self.se_layer_config(self.modules[name], coarse_in_1, coarse_out_1, coarse_in_2, coarse_out_2, fine_1, fine_2, s_in=s_in+s_out-1, s_out=1)
-                                                # logging.error("Fold = {}. rate IN = {}. rate OUT = {}".format(folding_name, rate_in, rate_out))
 
                                                 #TODO: Added worst possible case for buffering on se module i.e., buffer the whole feature map and all of the channels. Should fix this by checking the depth/latency of the left branch in order to calculate the exact buffering that is gonna needed in each se module.
                                                 #TODO: Another solution is to read again from off-chip memory which will prevent the buffering i.e., reduce the BRAM needs BUT will reduce the mem bw in total as well since we need to first write the results (in a bigger layer-wise partition) and the read them again i.e., will probably need to have mem_bw / 4 instead of mem_bw / 2 in each point that we access the off-chip memory.
@@ -955,10 +947,46 @@ class ModelFeatureMapsOnnx():
                             logging.warning("Fold = {}. Channels In = {} - Filters = {}".format(folding_name, cin, cout))
 
                             self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem)
-                    #TODO: Should add the ADD layer aswell
+                    elif operation == 'Add':
+                        out_shape = self.modules[name]['shape_out']
+                        cout = out_shape[1]
+                        dout = out_shape[2]
+                        hout = out_shape[3]
+                        wout = out_shape[4]
+                        out_size = int(np.prod(np.array(out_shape[1:])))
+
+                        in_shape = self.modules[name]['shape_in']
+                        cin = in_shape[1]
+                        din = in_shape[2]
+                        hin = in_shape[3]
+                        win = in_shape[4]
+                        in_size = int(np.prod(np.array(in_shape[1:])))
+
+                        assert out_shape == in_shape, 'Input and output shapes bust be identical in BatchNormalization Layer'
+
+                        # coarse_config = list(reduce(list.__add__, ([i, cin//i] for i in range(1, int(cin**0.5) + 1) if cin % i == 0)))
+                        # coarse_config = [1, cin//4, cin//2, cin]
+                        coarse_config = [cin//4]
+                        coarse_config = np.unique(coarse_config)
+                        coarse_config = coarse_config[np.nonzero(coarse_config)].tolist()
+
+
+                        for coarse in coarse_config:
+
+                            rate_in = 1 * coarse
+                            rate_out = 1 * coarse
+                            mem = 0
+                            muls = 0
+                            adds = 1 * coarse
+                            folding_name = "N_Coarse({}/{})".format(coarse, coarse)
+
+                            logging.warning("Fold = {}. Channels In = {} - Filters = {}".format(folding_name, cin, cout))
+
+                            self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem)
+                    
                     csv_writer.writerow(["-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"])
 
-    def compose_layers(self, file_name, layers_names, final_name):
+    def compose_layers(self, file_name, layers_names, final_name, model_name):
         l_configs = {}
         for l in layers_names:
             l_configs[l] = []
@@ -987,58 +1015,142 @@ class ModelFeatureMapsOnnx():
         dsp_config = []
         bram_config = []
         throughput_config = []
-        if len(sizes) == 11:
+        if len(sizes) == 13:
             with tqdm(total=int(np.prod(np.array(sizes)))) as pbar:
-                for c1 in tqdm(range(sizes[0]), leave=False):
-                    for b1 in tqdm(range(sizes[1]), leave=False):
-                        for r1 in tqdm(range(sizes[2]), leave=False):
-                            for c2 in tqdm(range(sizes[3]), leave=False):
-                                for b2 in tqdm(range(sizes[4]), leave=False):
-                                    for se1 in tqdm(range(sizes[5]), leave=False):
-                                        for sw1 in tqdm(range(sizes[6]), leave=False):
-                                            for c3 in tqdm(range(sizes[7]), leave=False):
-                                                for b3 in tqdm(range(sizes[8]), leave=False):
-                                                    for c4 in tqdm(range(sizes[9]), leave=False):
-                                                        for b4 in tqdm(range(sizes[10]), leave=False):
+                for r1 in tqdm(range(sizes[0]), leave=False):
+                    for c1 in tqdm(range(sizes[1]), leave=False):
+                        for b1 in tqdm(range(sizes[2]), leave=False):
+                            for r2 in tqdm(range(sizes[3]), leave=False):
+                                for c2 in tqdm(range(sizes[4]), leave=False):
+                                    for b2 in tqdm(range(sizes[5]), leave=False):
+                                        for se1 in tqdm(range(sizes[6]), leave=False):
+                                            for sw1 in tqdm(range(sizes[7]), leave=False):
+                                                for c3 in tqdm(range(sizes[8]), leave=False):
+                                                    for b3 in tqdm(range(sizes[9]), leave=False):
+                                                        for c4 in tqdm(range(sizes[10]), leave=False):
+                                                            for b4 in tqdm(range(sizes[11]), leave=False):
+                                                                for a1 in tqdm(range(sizes[12]), leave=False):
+                                                                    pbar.update(1)
+                                                                    rates_graph = np.zeros( shape=(13,14) , dtype=float )
+
+                                                                    rates_graph[0,0] = float(l_configs[keys[0]][r1][5])
+                                                                    rates_graph[0,1] = float(l_configs[keys[0]][r1][6])
+
+                                                                    rates_graph[1,1] = float(l_configs[keys[1]][c1][5])
+                                                                    rates_graph[1,2] = float(l_configs[keys[1]][c1][6])
+
+                                                                    rates_graph[2,2] = float(l_configs[keys[2]][b1][5])
+                                                                    rates_graph[2,3] = float(l_configs[keys[2]][b1][6])
+
+                                                                    rates_graph[3,3] = float(l_configs[keys[3]][r2][5])
+                                                                    rates_graph[3,4] = float(l_configs[keys[3]][r2][6])
+
+                                                                    rates_graph[4,4] = float(l_configs[keys[4]][c2][5])
+                                                                    rates_graph[4,5] = float(l_configs[keys[4]][c2][6])
+
+                                                                    rates_graph[5,5] = float(l_configs[keys[5]][b2][5])
+                                                                    rates_graph[5,6] = float(l_configs[keys[5]][b2][6])
+
+                                                                    rates_graph[6,6] = float(l_configs[keys[6]][se1][5])
+                                                                    rates_graph[6,7] = float(l_configs[keys[6]][se1][6])
+
+                                                                    rates_graph[7,7] = float(l_configs[keys[7]][sw1][5])
+                                                                    rates_graph[7,8] = float(l_configs[keys[7]][sw1][6])
+
+                                                                    rates_graph[8,8] = float(l_configs[keys[8]][c3][5])
+                                                                    rates_graph[8,9] = float(l_configs[keys[8]][c3][6])
+
+                                                                    rates_graph[9,9] = float(l_configs[keys[9]][b3][5])
+                                                                    rates_graph[9,10] = float(l_configs[keys[9]][b3][6])
+
+                                                                    rates_graph[10,10] = float(l_configs[keys[10]][c4][5])
+                                                                    rates_graph[10,11] = float(l_configs[keys[10]][c4][6])
+
+                                                                    rates_graph[11,11] = float(l_configs[keys[11]][b4][5])
+                                                                    rates_graph[11,12] = float(l_configs[keys[11]][b4][6])
+
+                                                                    rates_graph[12,12] = float(l_configs[keys[12]][a1][5])
+                                                                    rates_graph[12,13] = float(l_configs[keys[12]][a1][6])
+
+                                                                    bram_total = float(l_configs[keys[0]][r1][1]) + float(l_configs[keys[1]][c1][1]) + float(l_configs[keys[2]][b1][1]) + float(l_configs[keys[3]][r2][1]) + float(l_configs[keys[4]][c2][1]) + float(l_configs[keys[5]][b2][1]) + float(l_configs[keys[6]][se1][1]) + float(l_configs[keys[7]][sw1][1]) + float(l_configs[keys[8]][c3][1]) + float(l_configs[keys[9]][b3][1]) + float(l_configs[keys[10]][c4][1]) + float(l_configs[keys[11]][b4][1]) + float(l_configs[keys[12]][a1][1])
+
+                                                                    dsps_total = float(l_configs[keys[0]][r1][2]) + float(l_configs[keys[1]][c1][2]) + float(l_configs[keys[2]][b1][2]) + float(l_configs[keys[3]][r2][2]) + float(l_configs[keys[4]][c2][2]) + float(l_configs[keys[5]][b2][2]) + float(l_configs[keys[6]][se1][2]) + float(l_configs[keys[7]][sw1][2]) + float(l_configs[keys[8]][c3][2]) + float(l_configs[keys[9]][b3][2]) + float(l_configs[keys[10]][c4][2]) + float(l_configs[keys[11]][b4][2]) + float(l_configs[keys[12]][a1][2])
+
+                                                                    rates_graph_balanced = np.copy(rates_graph)
+                                                                    rates_graph_balanced = self.balance_module_rates(rates_graph_balanced)
+
+                                                                    rate_in = abs(rates_graph_balanced[0,0])
+                                                                    rate_out = abs(rates_graph_balanced[12,13])
+                                                                    
+                                                                    # if len(keys[0].split("_PointWise")) > 1:
+                                                                    #     in_key = keys[0].split("_PointWise")[0]
+                                                                    # elif len(keys[0].split("_DepthWise")) > 1:
+                                                                    #     in_key = keys[0].split("_DepthWise")
+                                                                    # else:
+                                                                    #     in_key = keys[0]
+                                                                    in_shape = self.modules[keys[0]]['shape_in']
+                                                                    in_size = int(np.prod(np.array(in_shape[1:])))
+                                                                    out_shape = self.modules[keys[12]]['shape_out']
+                                                                    out_size = int(np.prod(np.array(out_shape[1:])))
+
+                                                                    thr_in = (self.cycles_per_sec*rate_in)/in_size
+                                                                    thr_out = (self.cycles_per_sec*rate_out)/out_size
+
+                                                                    dsp_config.append(dsps_total)
+                                                                    bram_config.append(bram_total)
+                                                                    throughput_config.append(thr_out)
+        elif len(sizes) == 11:
+            with tqdm(total=int(np.prod(np.array(sizes)))) as pbar:
+                for r1 in tqdm(range(sizes[0]), leave=False):
+                    for c1 in tqdm(range(sizes[1]), leave=False):
+                        for b1 in tqdm(range(sizes[2]), leave=False):
+                            for r2 in tqdm(range(sizes[3]), leave=False):
+                                for c2 in tqdm(range(sizes[4]), leave=False):
+                                    for b2 in tqdm(range(sizes[5]), leave=False):
+                                        for se1 in tqdm(range(sizes[6]), leave=False):
+                                            for sw1 in tqdm(range(sizes[7]), leave=False):
+                                                for c3 in tqdm(range(sizes[8]), leave=False):
+                                                    for b3 in tqdm(range(sizes[9]), leave=False):
+                                                        for c4 in tqdm(range(sizes[10]), leave=False):
                                                             pbar.update(1)
                                                             rates_graph = np.zeros( shape=(11,12) , dtype=float )
 
-                                                            rates_graph[0,0] = float(l_configs[keys[0]][c1][5])
-                                                            rates_graph[0,1] = float(l_configs[keys[0]][c1][6])
+                                                            rates_graph[0,0] = float(l_configs[keys[0]][r1][5])
+                                                            rates_graph[0,1] = float(l_configs[keys[0]][r1][6])
 
-                                                            rates_graph[1,1] = float(l_configs[keys[1]][b1][5])
-                                                            rates_graph[1,2] = float(l_configs[keys[1]][b1][6])
+                                                            rates_graph[1,1] = float(l_configs[keys[1]][c1][5])
+                                                            rates_graph[1,2] = float(l_configs[keys[1]][c1][6])
 
-                                                            rates_graph[2,2] = float(l_configs[keys[2]][r1][5])
-                                                            rates_graph[2,3] = float(l_configs[keys[2]][r1][6])
+                                                            rates_graph[2,2] = float(l_configs[keys[2]][b1][5])
+                                                            rates_graph[2,3] = float(l_configs[keys[2]][b1][6])
 
-                                                            rates_graph[3,3] = float(l_configs[keys[3]][c2][5])
-                                                            rates_graph[3,4] = float(l_configs[keys[3]][c2][6])
+                                                            rates_graph[3,3] = float(l_configs[keys[3]][r2][5])
+                                                            rates_graph[3,4] = float(l_configs[keys[3]][r2][6])
 
-                                                            rates_graph[4,4] = float(l_configs[keys[4]][b2][5])
-                                                            rates_graph[4,5] = float(l_configs[keys[4]][b2][6])
+                                                            rates_graph[4,4] = float(l_configs[keys[4]][c2][5])
+                                                            rates_graph[4,5] = float(l_configs[keys[4]][c2][6])
 
-                                                            rates_graph[5,5] = float(l_configs[keys[5]][se1][5])
-                                                            rates_graph[5,6] = float(l_configs[keys[5]][se1][6])
+                                                            rates_graph[5,5] = float(l_configs[keys[5]][b2][5])
+                                                            rates_graph[5,6] = float(l_configs[keys[5]][b2][6])
 
-                                                            rates_graph[6,6] = float(l_configs[keys[6]][sw1][5])
-                                                            rates_graph[6,7] = float(l_configs[keys[6]][sw1][6])
+                                                            rates_graph[6,6] = float(l_configs[keys[6]][se1][5])
+                                                            rates_graph[6,7] = float(l_configs[keys[6]][se1][6])
 
-                                                            rates_graph[7,7] = float(l_configs[keys[7]][c3][5])
-                                                            rates_graph[7,8] = float(l_configs[keys[7]][c3][6])
+                                                            rates_graph[7,7] = float(l_configs[keys[7]][sw1][5])
+                                                            rates_graph[7,8] = float(l_configs[keys[7]][sw1][6])
 
-                                                            rates_graph[8,8] = float(l_configs[keys[8]][b3][5])
-                                                            rates_graph[8,9] = float(l_configs[keys[8]][b3][6])
+                                                            rates_graph[8,8] = float(l_configs[keys[8]][c3][5])
+                                                            rates_graph[8,9] = float(l_configs[keys[8]][c3][6])
 
-                                                            rates_graph[9,9] = float(l_configs[keys[9]][c4][5])
-                                                            rates_graph[9,10] = float(l_configs[keys[9]][c4][6])
+                                                            rates_graph[9,9] = float(l_configs[keys[9]][b3][5])
+                                                            rates_graph[9,10] = float(l_configs[keys[9]][b3][6])
 
-                                                            rates_graph[10,10] = float(l_configs[keys[10]][b4][5])
-                                                            rates_graph[10,11] = float(l_configs[keys[10]][b4][6])
+                                                            rates_graph[10,10] = float(l_configs[keys[10]][c4][5])
+                                                            rates_graph[10,11] = float(l_configs[keys[10]][c4][6])
 
-                                                            bram_total = float(l_configs[keys[0]][c1][1]) + float(l_configs[keys[1]][b1][1]) + float(l_configs[keys[2]][r1][1]) + float(l_configs[keys[3]][c2][1]) + float(l_configs[keys[4]][b2][1]) + float(l_configs[keys[5]][se1][1]) + float(l_configs[keys[6]][sw1][1]) + float(l_configs[keys[7]][c3][1]) + float(l_configs[keys[8]][b3][1]) + float(l_configs[keys[9]][c4][1]) + float(l_configs[keys[10]][b4][1])
+                                                            bram_total = float(l_configs[keys[0]][r1][1]) + float(l_configs[keys[1]][c1][1]) + float(l_configs[keys[2]][b1][1]) + float(l_configs[keys[3]][r2][1]) + float(l_configs[keys[4]][c2][1]) + float(l_configs[keys[5]][b2][1]) + float(l_configs[keys[6]][se1][1]) + float(l_configs[keys[7]][sw1][1]) + float(l_configs[keys[8]][c3][1]) + float(l_configs[keys[9]][b3][1]) + float(l_configs[keys[10]][c4][1])
 
-                                                            dsps_total = float(l_configs[keys[0]][c1][2]) + float(l_configs[keys[1]][b1][2]) + float(l_configs[keys[2]][r1][2])+ float(l_configs[keys[3]][c2][2]) + float(l_configs[keys[4]][b2][2]) + float(l_configs[keys[5]][se1][2]) + float(l_configs[keys[6]][sw1][2]) + float(l_configs[keys[7]][c3][2]) + float(l_configs[keys[8]][b3][2]) + float(l_configs[keys[9]][c4][2]) + float(l_configs[keys[10]][b4][2])
+                                                            dsps_total = float(l_configs[keys[0]][r1][2]) + float(l_configs[keys[1]][c1][2]) + float(l_configs[keys[2]][b1][2]) + float(l_configs[keys[3]][r2][2]) + float(l_configs[keys[4]][c2][2]) + float(l_configs[keys[5]][b2][2]) + float(l_configs[keys[6]][se1][2]) + float(l_configs[keys[7]][sw1][2]) + float(l_configs[keys[8]][c3][2]) + float(l_configs[keys[9]][b3][2]) + float(l_configs[keys[10]][c4][2])
 
                                                             rates_graph_balanced = np.copy(rates_graph)
                                                             rates_graph_balanced = self.balance_module_rates(rates_graph_balanced)
@@ -1046,13 +1158,13 @@ class ModelFeatureMapsOnnx():
                                                             rate_in = abs(rates_graph_balanced[0,0])
                                                             rate_out = abs(rates_graph_balanced[10,11])
                                                             
-                                                            if len(keys[0].split("_PointWise")) > 1:
-                                                                in_key = keys[0].split("_PointWise")[0]
-                                                            elif len(keys[0].split("_DepthWise")) > 1:
-                                                                in_key = keys[0].split("_DepthWise")
-                                                            else:
-                                                                in_key = keys[0]
-                                                            in_shape = self.modules[in_key]['shape_in']
+                                                            # if len(keys[0].split("_PointWise")) > 1:
+                                                            #     in_key = keys[0].split("_PointWise")[0]
+                                                            # elif len(keys[0].split("_DepthWise")) > 1:
+                                                            #     in_key = keys[0].split("_DepthWise")
+                                                            # else:
+                                                            #     in_key = keys[0]
+                                                            in_shape = self.modules[keys[0]]['shape_in']
                                                             in_size = int(np.prod(np.array(in_shape[1:])))
                                                             out_shape = self.modules[keys[10]]['shape_out']
                                                             out_size = int(np.prod(np.array(out_shape[1:])))
@@ -1063,142 +1175,146 @@ class ModelFeatureMapsOnnx():
                                                             dsp_config.append(dsps_total)
                                                             bram_config.append(bram_total)
                                                             throughput_config.append(thr_out)
+        elif len(sizes) == 10:
+            with tqdm(total=int(np.prod(np.array(sizes)))) as pbar:
+                for r1 in tqdm(range(sizes[0]), leave=False):
+                    for c1 in tqdm(range(sizes[1]), leave=False):
+                        for b1 in tqdm(range(sizes[2]), leave=False):
+                            for r2 in tqdm(range(sizes[3]), leave=False):
+                                for c2 in tqdm(range(sizes[4]), leave=False):
+                                    for b2 in tqdm(range(sizes[5]), leave=False):
+                                        for se1 in tqdm(range(sizes[6]), leave=False):
+                                            for sw1 in tqdm(range(sizes[7]), leave=False):
+                                                for c3 in tqdm(range(sizes[8]), leave=False):
+                                                    for b3 in tqdm(range(sizes[9]), leave=False):
+                                                        pbar.update(1)
+                                                        rates_graph = np.zeros( shape=(10,11) , dtype=float )
+
+                                                        rates_graph[0,0] = float(l_configs[keys[0]][r1][5])
+                                                        rates_graph[0,1] = float(l_configs[keys[0]][r1][6])
+
+                                                        rates_graph[1,1] = float(l_configs[keys[1]][c1][5])
+                                                        rates_graph[1,2] = float(l_configs[keys[1]][c1][6])
+
+                                                        rates_graph[2,2] = float(l_configs[keys[2]][b1][5])
+                                                        rates_graph[2,3] = float(l_configs[keys[2]][b1][6])
+
+                                                        rates_graph[3,3] = float(l_configs[keys[3]][r2][5])
+                                                        rates_graph[3,4] = float(l_configs[keys[3]][r2][6])
+
+                                                        rates_graph[4,4] = float(l_configs[keys[4]][c2][5])
+                                                        rates_graph[4,5] = float(l_configs[keys[4]][c2][6])
+
+                                                        rates_graph[5,5] = float(l_configs[keys[5]][b2][5])
+                                                        rates_graph[5,6] = float(l_configs[keys[5]][b2][6])
+
+                                                        rates_graph[6,6] = float(l_configs[keys[6]][se1][5])
+                                                        rates_graph[6,7] = float(l_configs[keys[6]][se1][6])
+
+                                                        rates_graph[7,7] = float(l_configs[keys[7]][sw1][5])
+                                                        rates_graph[7,8] = float(l_configs[keys[7]][sw1][6])
+
+                                                        rates_graph[8,8] = float(l_configs[keys[8]][c3][5])
+                                                        rates_graph[8,9] = float(l_configs[keys[8]][c3][6])
+
+                                                        rates_graph[9,9] = float(l_configs[keys[9]][b3][5])
+                                                        rates_graph[9,10] = float(l_configs[keys[9]][b3][6])
+
+                                                        bram_total = float(l_configs[keys[0]][r1][1]) + float(l_configs[keys[1]][c1][1]) + float(l_configs[keys[2]][b1][1]) + float(l_configs[keys[3]][r2][1]) + float(l_configs[keys[4]][c2][1]) + float(l_configs[keys[5]][b2][1]) + float(l_configs[keys[6]][se1][1]) + float(l_configs[keys[7]][sw1][1]) + float(l_configs[keys[8]][c3][1]) + float(l_configs[keys[9]][b3][1])
+
+                                                        dsps_total = float(l_configs[keys[0]][r1][2]) + float(l_configs[keys[1]][c1][2]) + float(l_configs[keys[2]][b1][2]) + float(l_configs[keys[3]][r2][2]) + float(l_configs[keys[4]][c2][2]) + float(l_configs[keys[5]][b2][2]) + float(l_configs[keys[6]][se1][2]) + float(l_configs[keys[7]][sw1][2]) + float(l_configs[keys[8]][c3][2]) + float(l_configs[keys[9]][b3][2])
+
+                                                        rates_graph_balanced = np.copy(rates_graph)
+                                                        rates_graph_balanced = self.balance_module_rates(rates_graph_balanced)
+
+                                                        rate_in = abs(rates_graph_balanced[0,0])
+                                                        rate_out = abs(rates_graph_balanced[9,10])
+                                                        
+                                                        # if len(keys[0].split("_PointWise")) > 1:
+                                                        #     in_key = keys[0].split("_PointWise")[0]
+                                                        # elif len(keys[0].split("_DepthWise")) > 1:
+                                                        #     in_key = keys[0].split("_DepthWise")
+                                                        # else:
+                                                        #     in_key = keys[0]
+                                                        in_shape = self.modules[keys[0]]['shape_in']
+                                                        in_size = int(np.prod(np.array(in_shape[1:])))
+                                                        out_shape = self.modules[keys[9]]['shape_out']
+                                                        out_size = int(np.prod(np.array(out_shape[1:])))
+
+                                                        thr_in = (self.cycles_per_sec*rate_in)/in_size
+                                                        thr_out = (self.cycles_per_sec*rate_out)/out_size
+
+                                                        dsp_config.append(dsps_total)
+                                                        bram_config.append(bram_total)
+                                                        throughput_config.append(thr_out)
         elif len(sizes) == 9:
             with tqdm(total=int(np.prod(np.array(sizes)))) as pbar:
-                for c1 in tqdm(range(sizes[0]), leave=False):
-                    for b1 in tqdm(range(sizes[1]), leave=False):
-                        for r1 in tqdm(range(sizes[2]), leave=False):
-                            for c2 in tqdm(range(sizes[3]), leave=False):
-                                for b2 in tqdm(range(sizes[4]), leave=False):
-                                    for se1 in tqdm(range(sizes[5]), leave=False):
-                                        for sw1 in tqdm(range(sizes[6]), leave=False):
-                                            for c3 in tqdm(range(sizes[7]), leave=False):
-                                                for b3 in tqdm(range(sizes[8]), leave=False):
+                for r1 in tqdm(range(sizes[0]), leave=False):
+                    for c1 in tqdm(range(sizes[1]), leave=False):
+                        for b1 in tqdm(range(sizes[2]), leave=False):
+                            for r2 in tqdm(range(sizes[3]), leave=False):
+                                for c2 in tqdm(range(sizes[4]), leave=False):
+                                    for b2 in tqdm(range(sizes[5]), leave=False):
+                                        for se1 in tqdm(range(sizes[6]), leave=False):
+                                            for sw1 in tqdm(range(sizes[7]), leave=False):
+                                                for c3 in tqdm(range(sizes[8]), leave=False):
+                                                    pbar.update(1)
+                                                    rates_graph = np.zeros( shape=(9,10) , dtype=float )
 
-                                                            pbar.update(1)
-                                                            rates_graph = np.zeros( shape=(9,10) , dtype=float )
+                                                    rates_graph[0,0] = float(l_configs[keys[0]][r1][5])
+                                                    rates_graph[0,1] = float(l_configs[keys[0]][r1][6])
 
-                                                            rates_graph[0,0] = float(l_configs[keys[0]][c1][5])
-                                                            rates_graph[0,1] = float(l_configs[keys[0]][c1][6])
+                                                    rates_graph[1,1] = float(l_configs[keys[1]][c1][5])
+                                                    rates_graph[1,2] = float(l_configs[keys[1]][c1][6])
 
-                                                            rates_graph[1,1] = float(l_configs[keys[1]][b1][5])
-                                                            rates_graph[1,2] = float(l_configs[keys[1]][b1][6])
+                                                    rates_graph[2,2] = float(l_configs[keys[2]][b1][5])
+                                                    rates_graph[2,3] = float(l_configs[keys[2]][b1][6])
 
-                                                            rates_graph[2,2] = float(l_configs[keys[2]][r1][5])
-                                                            rates_graph[2,3] = float(l_configs[keys[2]][r1][6])
+                                                    rates_graph[3,3] = float(l_configs[keys[3]][r2][5])
+                                                    rates_graph[3,4] = float(l_configs[keys[3]][r2][6])
 
-                                                            rates_graph[3,3] = float(l_configs[keys[3]][c2][5])
-                                                            rates_graph[3,4] = float(l_configs[keys[3]][c2][6])
+                                                    rates_graph[4,4] = float(l_configs[keys[4]][c2][5])
+                                                    rates_graph[4,5] = float(l_configs[keys[4]][c2][6])
 
-                                                            rates_graph[4,4] = float(l_configs[keys[4]][b2][5])
-                                                            rates_graph[4,5] = float(l_configs[keys[4]][b2][6])
+                                                    rates_graph[5,5] = float(l_configs[keys[5]][b2][5])
+                                                    rates_graph[5,6] = float(l_configs[keys[5]][b2][6])
 
-                                                            rates_graph[5,5] = float(l_configs[keys[5]][se1][5])
-                                                            rates_graph[5,6] = float(l_configs[keys[5]][se1][6])
+                                                    rates_graph[6,6] = float(l_configs[keys[6]][se1][5])
+                                                    rates_graph[6,7] = float(l_configs[keys[6]][se1][6])
 
-                                                            rates_graph[6,6] = float(l_configs[keys[6]][sw1][5])
-                                                            rates_graph[6,7] = float(l_configs[keys[6]][sw1][6])
+                                                    rates_graph[7,7] = float(l_configs[keys[7]][sw1][5])
+                                                    rates_graph[7,8] = float(l_configs[keys[7]][sw1][6])
 
-                                                            rates_graph[7,7] = float(l_configs[keys[7]][c3][5])
-                                                            rates_graph[7,8] = float(l_configs[keys[7]][c3][6])
+                                                    rates_graph[8,8] = float(l_configs[keys[8]][c3][5])
+                                                    rates_graph[8,9] = float(l_configs[keys[8]][c3][6])
 
-                                                            rates_graph[8,8] = float(l_configs[keys[8]][b3][5])
-                                                            rates_graph[8,9] = float(l_configs[keys[8]][b3][6])
+                                                    bram_total = float(l_configs[keys[0]][r1][1]) + float(l_configs[keys[1]][c1][1]) + float(l_configs[keys[2]][b1][1]) + float(l_configs[keys[3]][r2][1]) + float(l_configs[keys[4]][c2][1]) + float(l_configs[keys[5]][b2][1]) + float(l_configs[keys[6]][se1][1]) + float(l_configs[keys[7]][sw1][1]) + float(l_configs[keys[8]][c3][1])
 
+                                                    dsps_total = float(l_configs[keys[0]][r1][2]) + float(l_configs[keys[1]][c1][2]) + float(l_configs[keys[2]][b1][2]) + float(l_configs[keys[3]][r2][2]) + float(l_configs[keys[4]][c2][2]) + float(l_configs[keys[5]][b2][2]) + float(l_configs[keys[6]][se1][2]) + float(l_configs[keys[7]][sw1][2]) + float(l_configs[keys[8]][c3][2])
 
-                                                            bram_total = float(l_configs[keys[0]][c1][1]) + float(l_configs[keys[1]][b1][1]) + float(l_configs[keys[2]][r1][1]) + float(l_configs[keys[3]][c2][1]) + float(l_configs[keys[4]][b2][1]) + float(l_configs[keys[5]][se1][1]) + float(l_configs[keys[6]][sw1][1]) + float(l_configs[keys[7]][c3][1]) + float(l_configs[keys[8]][b3][1])
+                                                    rates_graph_balanced = np.copy(rates_graph)
+                                                    rates_graph_balanced = self.balance_module_rates(rates_graph_balanced)
 
-                                                            dsps_total = float(l_configs[keys[0]][c1][2]) + float(l_configs[keys[1]][b1][2]) + float(l_configs[keys[2]][r1][2])+ float(l_configs[keys[3]][c2][2]) + float(l_configs[keys[4]][b2][2]) + float(l_configs[keys[5]][se1][2]) + float(l_configs[keys[6]][sw1][2]) + float(l_configs[keys[7]][c3][2]) + float(l_configs[keys[8]][b3][2])
+                                                    rate_in = abs(rates_graph_balanced[0,0])
+                                                    rate_out = abs(rates_graph_balanced[8,9])
+                                                    
+                                                    # if len(keys[0].split("_PointWise")) > 1:
+                                                    #     in_key = keys[0].split("_PointWise")[0]
+                                                    # elif len(keys[0].split("_DepthWise")) > 1:
+                                                    #     in_key = keys[0].split("_DepthWise")
+                                                    # else:
+                                                    #     in_key = keys[0]
+                                                    in_shape = self.modules[keys[0]]['shape_in']
+                                                    in_size = int(np.prod(np.array(in_shape[1:])))
+                                                    out_shape = self.modules[keys[8]]['shape_out']
+                                                    out_size = int(np.prod(np.array(out_shape[1:])))
 
-                                                            rates_graph_balanced = np.copy(rates_graph)
-                                                            rates_graph_balanced = self.balance_module_rates(rates_graph_balanced)
+                                                    thr_in = (self.cycles_per_sec*rate_in)/in_size
+                                                    thr_out = (self.cycles_per_sec*rate_out)/out_size
 
-                                                            rate_in = abs(rates_graph_balanced[0,0])
-                                                            rate_out = abs(rates_graph_balanced[8,9])
-                                                            
-                                                            if len(keys[0].split("_PointWise")) > 1:
-                                                                in_key = keys[0].split("_PointWise")[0]
-                                                            elif len(keys[0].split("_DepthWise")) > 1:
-                                                                in_key = keys[0].split("_DepthWise")
-                                                            else:
-                                                                in_key = keys[0]
-                                                            in_shape = self.modules[in_key]['shape_in']
-                                                            in_size = int(np.prod(np.array(in_shape[1:])))
-                                                            out_shape = self.modules[keys[8]]['shape_out']
-                                                            out_size = int(np.prod(np.array(out_shape[1:])))
-
-                                                            thr_in = (self.cycles_per_sec*rate_in)/in_size
-                                                            thr_out = (self.cycles_per_sec*rate_out)/out_size
-
-                                                            dsp_config.append(dsps_total)
-                                                            bram_config.append(bram_total)
-                                                            throughput_config.append(thr_out)
-        elif len(sizes) == 8:
-            with tqdm(total=int(np.prod(np.array(sizes)))) as pbar:
-                for c1 in tqdm(range(sizes[0]), leave=False):
-                    for b1 in tqdm(range(sizes[1]), leave=False):
-                        for r1 in tqdm(range(sizes[2]), leave=False):
-                            for c2 in tqdm(range(sizes[3]), leave=False):
-                                for b2 in tqdm(range(sizes[4]), leave=False):
-                                    for se1 in tqdm(range(sizes[5]), leave=False):
-                                        for sw1 in tqdm(range(sizes[6]), leave=False):
-                                            for c3 in tqdm(range(sizes[7]), leave=False):
-
-                                                            pbar.update(1)
-                                                            rates_graph = np.zeros( shape=(8,9) , dtype=float )
-
-                                                            rates_graph[0,0] = float(l_configs[keys[0]][c1][5])
-                                                            rates_graph[0,1] = float(l_configs[keys[0]][c1][6])
-
-                                                            rates_graph[1,1] = float(l_configs[keys[1]][b1][5])
-                                                            rates_graph[1,2] = float(l_configs[keys[1]][b1][6])
-
-                                                            rates_graph[2,2] = float(l_configs[keys[2]][r1][5])
-                                                            rates_graph[2,3] = float(l_configs[keys[2]][r1][6])
-
-                                                            rates_graph[3,3] = float(l_configs[keys[3]][c2][5])
-                                                            rates_graph[3,4] = float(l_configs[keys[3]][c2][6])
-
-                                                            rates_graph[4,4] = float(l_configs[keys[4]][b2][5])
-                                                            rates_graph[4,5] = float(l_configs[keys[4]][b2][6])
-
-                                                            rates_graph[5,5] = float(l_configs[keys[5]][se1][5])
-                                                            rates_graph[5,6] = float(l_configs[keys[5]][se1][6])
-
-                                                            rates_graph[6,6] = float(l_configs[keys[6]][sw1][5])
-                                                            rates_graph[6,7] = float(l_configs[keys[6]][sw1][6])
-
-                                                            rates_graph[7,7] = float(l_configs[keys[7]][c3][5])
-                                                            rates_graph[7,8] = float(l_configs[keys[7]][c3][6])
-
-
-                                                            bram_total = float(l_configs[keys[0]][c1][1]) + float(l_configs[keys[1]][b1][1]) + float(l_configs[keys[2]][r1][1]) + float(l_configs[keys[3]][c2][1]) + float(l_configs[keys[4]][b2][1]) + float(l_configs[keys[5]][se1][1]) + float(l_configs[keys[6]][sw1][1]) + float(l_configs[keys[7]][c3][1])
-
-                                                            dsps_total = float(l_configs[keys[0]][c1][2]) + float(l_configs[keys[1]][b1][2]) + float(l_configs[keys[2]][r1][2])+ float(l_configs[keys[3]][c2][2]) + float(l_configs[keys[4]][b2][2]) + float(l_configs[keys[5]][se1][2]) + float(l_configs[keys[6]][sw1][2]) + float(l_configs[keys[7]][c3][2])
-
-                                                            rates_graph_balanced = np.copy(rates_graph)
-                                                            rates_graph_balanced = self.balance_module_rates(rates_graph_balanced)
-
-                                                            rate_in = abs(rates_graph_balanced[0,0])
-                                                            rate_out = abs(rates_graph_balanced[7,8])
-                                                            
-                                                            if len(keys[0].split("_PointWise")) > 1:
-                                                                in_key = keys[0].split("_PointWise")[0]
-                                                            elif len(keys[0].split("_DepthWise")) > 1:
-                                                                in_key = keys[0].split("_DepthWise")
-                                                            else:
-                                                                in_key = keys[0]
-                                                            in_shape = self.modules[in_key]['shape_in']
-                                                            in_size = int(np.prod(np.array(in_shape[1:])))
-                                                            out_shape = self.modules[keys[7]]['shape_out']
-                                                            out_size = int(np.prod(np.array(out_shape[1:])))
-
-                                                            thr_in = (self.cycles_per_sec*rate_in)/in_size
-                                                            thr_out = (self.cycles_per_sec*rate_out)/out_size
-
-                                                            dsp_config.append(dsps_total)
-                                                            bram_config.append(bram_total)
-                                                            throughput_config.append(thr_out)
+                                                    dsp_config.append(dsps_total)
+                                                    bram_config.append(bram_total)
+                                                    throughput_config.append(thr_out)
 
         scores = np.zeros((len(throughput_config), 2))
         scores[:,0] = throughput_config
@@ -1212,13 +1328,17 @@ class ModelFeatureMapsOnnx():
         
         sns.scatterplot(x=throughput_config, y=dsp_config, s=50)
         sns.lineplot(x=pareto_front[:, 0], y=pareto_front[:, 1], color='red')
+        print(np.unique(np.array(bram_config)))
         bram_tot = "{:.3f}".format(max(bram_config))
                 
-        plt.title(final_name + " (" + bram_tot + " % BRAM Usage)")
+        plt.title(str(final_name) + " (" + bram_tot + " % BRAM Usage)")
         plt.xlabel('Throughtput(outputs/sec)')
         plt.xscale("log")
         plt.ylabel('DSPS %')
-        plt.savefig("/home/petros/Development/HAR_NN/mmaction2/fpga_modeling_reports/graphs/" + final_name + ".png")
+        if not os.path.exists(os.path.join(os.getcwd(), 'fpga_modeling_reports', 'graphs', model_name, 'partition_layers')):
+            os.makedirs(os.path.join(os.getcwd(), 'fpga_modeling_reports', 'graphs', model_name, 'partition_layers'))
+        partitions_path = os.path.join(os.getcwd(), 'fpga_modeling_reports', 'graphs', model_name, 'partition_layers')
+        plt.savefig(os.path.join(partitions_path, str(final_name) + ".png"))
         plt.clf()
 
 class ModelFeatureMaps():
@@ -1655,6 +1775,38 @@ def get_paretto(file_name="x3d_m"):
                 csv_writer_par.writerow(rows[p])
             csv_writer_par.writerow(["-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"])
 
+def get_partition_layers(layers, model_name):
+    final_layers = []
+    if model_name == 'x3d_m':
+        layer_type_1 = ['Relu', 'Conv', 'BatchNormalization', 'Relu', 'Conv', 'BatchNormalization', 'SqueezeExcitation', 'Swish', 'Conv', 'BatchNormalization', 'Conv', 'BatchNormalization', 'Add']
+        layer_type_2 = ['Relu', 'Conv', 'BatchNormalization', 'Relu', 'Conv', 'BatchNormalization', 'SqueezeExcitation', 'Swish', 'Conv', 'BatchNormalization', 'Add']
+        layer_type_3 = ['Relu', 'Conv', 'BatchNormalization', 'Relu', 'Conv', 'BatchNormalization', 'Swish', 'Conv', 'BatchNormalization', 'Add']    
+        layer_queue = deque(maxlen=13)
+        layer_queue_operations = deque(maxlen=13)
+        for k in layers.keys():
+            layer_queue_operations.append(layers[k]['operation'])
+            layer_queue.append(k)
+            if list(layer_queue_operations) == layer_type_1:
+                final_layers.append(list(layer_queue))
+            if list(layer_queue_operations)[:-2] == layer_type_2:
+                final_layers.append(list(layer_queue)[:-2])
+            if list(layer_queue_operations)[:-3] == layer_type_3:
+                final_layers.append(list(layer_queue)[:-3])
+    elif model_name == 'i3d':
+        layer_type_1 = ['Conv', 'BatchNormalization', 'Relu', 'Conv', 'BatchNormalization', 'Relu', 'Conv', 'BatchNormalization', 'Conv', 'BatchNormalization', 'Add']
+        layer_type_2 = ['Conv', 'BatchNormalization', 'Relu', 'Conv', 'BatchNormalization', 'Relu', 'Conv', 'BatchNormalization', 'Add']
+        layer_queue = deque(maxlen=11)
+        layer_queue_operations = deque(maxlen=11)
+        for k in layers.keys():
+            layer_queue_operations.append(layers[k]['operation'])
+            layer_queue.append(k)
+            if list(layer_queue_operations) == layer_type_1:
+                final_layers.append(list(layer_queue))
+            if list(layer_queue_operations)[:-2] == layer_type_2:
+                final_layers.append(list(layer_queue)[:-2])
+    return final_layers
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description='MMAction2 parse model')
     parser.add_argument('model_name', help='name of the har model')
@@ -1752,29 +1904,13 @@ def main():
 
         get_paretto(file_name=fname)
 
-        # exit()
+        #TODO: (URGENT) Take into consideration the buffering needed in branching or read again from the off-chip memory and reduce the bw in the individual layers.
+        partition_layers = get_partition_layers(onnx_modeling.modules, args.model_name)
 
         fname_pareto = fname + "_pareto"
-
-        #TODO: (URGENT) Automatically create all of the layers in the model and extract the corresponding graphs.
-        #TODO: (URGENT) Take into consideration the buffering needed in branching or read again from the off-chip memory and reduce the bw in the individual layers.
-        # 11 Modules. With Downsampling residual.
-        layers_1_0 = ["Conv_24_PointWise", "BatchNormalization_25", "Relu_26", "Conv_27_DepthWise", "BatchNormalization_28", "Se_29", "Swish_35", "Conv_37_PointWise", "BatchNormalization_38", "Conv_39_PointWise", "BatchNormalization_40"]
-        layer_3_0 = ["Conv_146_PointWise", "BatchNormalization_147", "Relu_148", "Conv_149_DepthWise", "BatchNormalization_150", "Se_151", "Swish_157", "Conv_159_PointWise", "BatchNormalization_160", "Conv_161_PointWise", "BatchNormalization_162"]
-
-        # 9 Modules.
-        layers_2_4 = ["Conv_129_PointWise", "BatchNormalization_130", "Relu_131", "Conv_132_DepthWise", "BatchNormalization_133", "Se_134", "Swish_140", "Conv_142_PointWise", "BatchNormalization_143"]
-        layers_4_4 = ["Conv_363_PointWise", "BatchNormalization_364", "Relu_365", "Conv_366_DepthWise", "BatchNormalization_367", "Se_368", "Swish_374", "Conv_376_PointWise", "BatchNormalization_377"]
-
-        # 8 Modules. No SE.
-        layers_1_1 = ["Conv_43_PointWise", "BatchNormalization_44", "Relu_45", "Conv_46_DepthWise", "BatchNormalization_47", "Swish_48", "Conv_50_PointWise", "BatchNormalization_51"]
-        layer_3_1 = ["Conv_165_PointWise", "BatchNormalization_166", "Relu_167", "Conv_168_DepthWise", "BatchNormalization_169", "Swish_170", "Conv_172_PointWise", "BatchNormalization_173"]
-
-        layers_names = ["layers_1_0", "layer_3_0", "layers_2_4", "layers_4_4", "layers_1_1", "layer_3_1"]
-        layers = [layers_1_0, layer_3_0, layers_2_4, layers_4_4, layers_1_1, layer_3_1]
-
-        for l, n in zip(layers, layers_names):
-            onnx_modeling.compose_layers(fname_pareto, l, n)
+        for n, l in enumerate(partition_layers):
+            print("Evaluating Layer {}/{}".format(n+1, len(partition_layers)))
+            onnx_modeling.compose_layers(fname_pareto, l, n+1, fname)   
 
 if __name__ == '__main__':
     main()
