@@ -12,10 +12,12 @@ from .loading import (AudioDecode, AudioDecodeInit, AudioFeatureSelector,
                       DenseSampleFrames, FrameSelector,
                       GenerateLocalizationLabels, ImageDecode,
                       LoadAudioFeature, LoadHVULabel, LoadLocalizationFeature,
-                      LoadProposals, OpenCVDecode, OpenCVInit, PyAVDecode,
-                      PyAVDecodeMotionVector, PyAVInit, RawFrameDecode,
-                      SampleAVAFrames, SampleFrames, SampleProposalFrames,
-                      UntrimmedSampleFrames)
+                      LoadProposals, OpenCVDecode, OpenCVInit, PIMSDecode,
+                      PIMSInit, PyAVDecode, PyAVDecodeMotionVector, PyAVInit,
+                      RawFrameDecode, SampleAVAFrames, SampleFrames,
+                      SampleProposalFrames, UntrimmedSampleFrames)
+from .pose_loading import (GeneratePoseTarget, LoadKineticsPose, PoseDecode,
+                           UniformSampleFrames)
 
 __all__ = [
     'SampleFrames', 'PyAVDecode', 'DecordDecode', 'DenseSampleFrames',
@@ -31,5 +33,7 @@ __all__ = [
     'FormatAudioShape', 'LoadAudioFeature', 'AudioFeatureSelector',
     'AudioDecodeInit', 'EntityBoxFlip', 'EntityBoxCrop', 'EntityBoxRescale',
     'RandomScale', 'ImageDecode', 'BuildPseudoClip', 'RandomRescale',
-    'PyAVDecodeMotionVector', 'Rename', 'Imgaug'
+    'PyAVDecodeMotionVector', 'Rename', 'Imgaug', 'UniformSampleFrames',
+    'PoseDecode', 'LoadKineticsPose', 'GeneratePoseTarget', 'PIMSInit',
+    'PIMSDecode'
 ]
