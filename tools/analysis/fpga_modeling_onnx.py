@@ -309,7 +309,7 @@ class ModelFeatureMapsOnnx():
             rate_in = abs(rates_graph[0,0])
             rate_out = abs(rates_graph[2,3])
         else:
-            # print("CONV RATE GRAPH")
+            # print("CONV RATE GRAPH (DW)")
             # print(rates_graph)
             # print("-"*50)
             rates_graph = self.balance_module_rates(rates_graph)
@@ -644,7 +644,7 @@ class ModelFeatureMapsOnnx():
 
             print("On Chip Mem(KB) = {:<15.3f} On Chip Mem(BRAM) = {:<20.3f} On Chip Mem (BRAM %) = {:<20.3f}\nMem BW In(words/cycle) = {:<20.3f} Mem BW In(GBs/sec) = {:<20.3f} Mem BW Out(words/cycle) = {:<20.3f} Mem BW Out(GBs/sec) = {:<20.3f}\nMuls = {:<20.3f} Adds = {:<20.3f} DSPS = {:<20.3f} DSPS % = {:<20.3f}\nThroughtput(words/cycle) = {:<20.3f} Consumption(inputs/sec) = {:<20.3f} Throughtput(outputs/sec) = {:<20.3f} Throughtput(GOps/sec) = {:.3f}".format(mem_kb, mem_bram, mem_util, bw_in_w, bw_in_gb, bw_out_w, bw_out_gb, muls, adds, dsps, dsps_util, thr_w_out, thr_in, thr_out, thr_go))
         else:
-            logging.error("Design point dropped because of too many recourses needed. DSPS = {} ({}%). BRAM = {} ({}%)".format(dsps, dsps_util, mem_bram, mem_util))
+            logging.warning("Design point dropped because of too many recourses needed. DSPS = {} ({}%). BRAM = {} ({}%)".format(dsps, dsps_util, mem_bram, mem_util))
 
     def create_design_points(self, file_name, s_in=1, s_out=1):
             if not os.path.exists(os.path.join(os.getcwd(), 'fpga_modeling_reports')):
@@ -803,8 +803,7 @@ class ModelFeatureMapsOnnx():
                         assert cin == cout, 'Input and output shapes bust be identical in BatchNormalization Layer'
 
                         # coarse_config = list(reduce(list.__add__, ([i, cin//i] for i in range(1, int(cin**0.5) + 1) if cin % i == 0)))
-                        # coarse_config = [1, cin//4, cin//2, cin]
-                        coarse_config = [cin//4]
+                        coarse_config = [1, cin//4, cin//2, cin]
                         coarse_config = np.unique(coarse_config)
                         coarse_config = coarse_config[np.nonzero(coarse_config)].tolist()
 
@@ -1605,8 +1604,6 @@ def main():
     fname = args.model_name + '_onnx'
     onnx_modeling.create_design_points(file_name=fname, s_in=onnx_modeling.max_words_per_cycle//2, s_out=onnx_modeling.max_words_per_cycle//2)
 
-    # performance_graphs(file_name=fname, layer_to_plot=None)
-
     get_paretto(file_name=fname)
 
     #TODO: (URGENT) Take into consideration the buffering needed in branching or read again from the off-chip memory and reduce the bw in the individual layers.
@@ -1616,6 +1613,8 @@ def main():
     for n, l in enumerate(partition_layers):
         print("Evaluating Layer {}/{}".format(n+1, len(partition_layers)))
         onnx_modeling.compose_layers(fname_pareto, l, n+1, fname)   
+
+    # performance_graphs(file_name=fname, layer_to_plot=None
 
 if __name__ == '__main__':
     main()
