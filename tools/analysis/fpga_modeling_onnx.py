@@ -47,7 +47,7 @@ class ModelFeatureMapsOnnx():
         # print(onnx.helper.printable_graph(self.onnx_model.graph))
 
     def thread_helper(self, arguments):
-        self.compose_layers(arguments[0], arguments[1], arguments[2], arguments[3], arguments[4])
+        self.compose_layers(arguments[0], arguments[1], arguments[2], arguments[3], arguments[4], arguments[5], arguments[6])
 
     def balance_module_rates_new(self, rate_graph):
         
@@ -402,6 +402,7 @@ class ModelFeatureMapsOnnx():
         glavpool_rate_in = 1 * mem_bw_in
         glavpool_rate_out = 1/(in_shape[2]*in_shape[3]*in_shape[4]) * mem_bw_in
         glavpool_mem = in_shape[1]
+        # TODO: Pass this into layer config
         glavpool_muls = 2 * mem_bw_in
         # glavpool_depth = 
 
@@ -813,12 +814,12 @@ class ModelFeatureMapsOnnx():
 
                         # coarse_config = list(reduce(list.__add__, ([i, cin//i] for i in range(1, int(cin**0.5) + 1) if cin % i == 0)))
                         # coarse_config = [1, cin//4, cin//2, cin]
-                        coarse_config = [cin//4]
+                        coarse_config = [cin//2]
                         coarse_config = np.unique(coarse_config)
                         coarse_config = coarse_config[np.nonzero(coarse_config)].tolist()
 
                         for coarse in coarse_config:
-
+                            # TODO: Keep this as rate in = 1 = rate out and same with the resources. Change these values on bigger layer config during "runtime"
                             rate_in = 1 * coarse
                             rate_out = 1 * coarse
                             mem = cin * 4
@@ -849,13 +850,13 @@ class ModelFeatureMapsOnnx():
 
                         # coarse_config = list(reduce(list.__add__, ([i, cin//i] for i in range(1, int(cin**0.5) + 1) if cin % i == 0)))
                         # coarse_config = [1, cin//4, cin//2, cin]
-                        coarse_config = [cin//4]
+                        coarse_config = [cin//2]
                         coarse_config = np.unique(coarse_config)
                         coarse_config = coarse_config[np.nonzero(coarse_config)].tolist()
                         
 
                         for coarse in coarse_config:
-
+                            # TODO: Keep this as rate in = 1 = rate out and same with the resources. Change these values on bigger layer config during "runtime"
                             rate_in = 1 * coarse
                             rate_out = 1 * coarse
                             mem = 0
@@ -972,7 +973,7 @@ class ModelFeatureMapsOnnx():
                                                 logging.warning("Fold = {}".format(folding_name))
                                                 
                                                 #TODO: The input mem bw on this layer is very important so we add the 9/10 of the total bw as the input bw and only the 1/10 as the output bw. When this layer is combined with others in a bigger partition the input rate of this layer will be driven by the output rate of the previous on the graph.
-                                                rate_in, rate_out, muls, adds, mem = self.se_layer_config(self.modules[name], coarse_in_1, coarse_out_1, coarse_in_2, coarse_out_2, fine_1, fine_2, s_in=s_in, s_out=s_out)
+                                                rate_in, rate_out, muls, adds, mem = self.se_layer_config(self.modules[name], coarse_in_1, coarse_out_1, coarse_in_2, coarse_out_2, fine_1, fine_2, s_in=s_in+s_out - 1, s_out=1)
 
                                                 #TODO: Added worst possible case for buffering on se module i.e., buffer the whole feature map and all of the channels. Should fix this by checking the depth/latency of the left branch in order to calculate the exact buffering that is gonna needed in each se module.
                                                 #TODO: Another solution is to read again from off-chip memory which will prevent the buffering i.e., reduce the BRAM needs BUT will reduce the mem bw in total as well since we need to first write the results (in a bigger layer-wise partition) and the read them again i.e., will probably need to have mem_bw / 4 instead of mem_bw / 2 in each point that we access the off-chip memory.
@@ -998,13 +999,13 @@ class ModelFeatureMapsOnnx():
 
                         # coarse_config = list(reduce(list.__add__, ([i, cin//i] for i in range(1, int(cin**0.5) + 1) if cin % i == 0)))
                         # coarse_config = [1, cin//4, cin//2, cin]
-                        coarse_config = [cin//4]
+                        coarse_config = [cin//2]
                         coarse_config = np.unique(coarse_config)
                         coarse_config = coarse_config[np.nonzero(coarse_config)].tolist()
 
 
                         for coarse in coarse_config:
-
+                            # TODO: Keep this as rate in = 1 = rate out and same with the resources. Change these values on bigger layer config during "runtime"
                             rate_in = 1 * coarse
                             rate_out = 1 * coarse
                             mem = 0
@@ -1034,13 +1035,13 @@ class ModelFeatureMapsOnnx():
 
                         # coarse_config = list(reduce(list.__add__, ([i, cin//i] for i in range(1, int(cin**0.5) + 1) if cin % i == 0)))
                         # coarse_config = [1, cin//4, cin//2, cin]
-                        coarse_config = [cin//4]
+                        coarse_config = [cin//2]
                         coarse_config = np.unique(coarse_config)
                         coarse_config = coarse_config[np.nonzero(coarse_config)].tolist()
 
 
                         for coarse in coarse_config:
-
+                            # TODO: Keep this as rate in = 1 = rate out and same with the resources. Change these values on bigger layer config during "runtime"
                             rate_in = 1 * coarse
                             rate_out = 1 * coarse
                             mem = 0
@@ -1054,7 +1055,7 @@ class ModelFeatureMapsOnnx():
                     
                     # csv_writer.writerow(["-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"])
 
-    def compose_layers(self, file_name, layers_names, final_name, model_name, calculate_pareto):
+    def compose_layers(self, file_name, layers_names, final_name, model_name, calculate_pareto, membw_in, membw_out):
         sns.set(rc={'figure.figsize':(15,8)})
         sns.set_style("darkgrid", {"axes.facecolor": ".85"})
         l_configs = {}
@@ -1105,6 +1106,9 @@ class ModelFeatureMapsOnnx():
 
                                                                     rates_graph[0,0] = float(l_configs[keys[0]][r1][5])
                                                                     rates_graph[0,1] = float(l_configs[keys[0]][r1][6])
+                                                                    in_module_ratio = rates_graph[0,1] / rates_graph[0,0]
+                                                                    rates_graph[0,0] = min(rates_graph[0,0], membw_in)
+                                                                    rates_graph[0,1] = min(rates_graph[0,1], membw_in * in_module_ratio)
 
                                                                     rates_graph[1,1] = float(l_configs[keys[1]][c1][5])
                                                                     rates_graph[1,2] = float(l_configs[keys[1]][c1][6])
@@ -1141,6 +1145,9 @@ class ModelFeatureMapsOnnx():
 
                                                                     rates_graph[12,12] = float(l_configs[keys[12]][a1][5])
                                                                     rates_graph[12,13] = float(l_configs[keys[12]][a1][6])
+                                                                    out_module_ratio = rates_graph[12,13] / rates_graph[12,12]
+                                                                    rates_graph[12,12] = min(rates_graph[12,12], membw_out)
+                                                                    rates_graph[12,13] = min(rates_graph[12,13], membw_out * out_module_ratio)
 
                                                                     bram_total = float(l_configs[keys[0]][r1][1]) + float(l_configs[keys[1]][c1][1]) + float(l_configs[keys[2]][b1][1]) + float(l_configs[keys[3]][r2][1]) + float(l_configs[keys[4]][c2][1]) + float(l_configs[keys[5]][b2][1]) + float(l_configs[keys[6]][se1][1]) + float(l_configs[keys[7]][sw1][1]) + float(l_configs[keys[8]][c3][1]) + float(l_configs[keys[9]][b3][1]) + float(l_configs[keys[10]][c4][1]) + float(l_configs[keys[11]][b4][1]) + float(l_configs[keys[12]][a1][1])
 
@@ -1152,12 +1159,6 @@ class ModelFeatureMapsOnnx():
                                                                     rate_in = abs(rates_graph_balanced[0,0])
                                                                     rate_out = abs(rates_graph_balanced[12,13])
                                                                     
-                                                                    # if len(keys[0].split("_PointWise")) > 1:
-                                                                    #     in_key = keys[0].split("_PointWise")[0]
-                                                                    # elif len(keys[0].split("_DepthWise")) > 1:
-                                                                    #     in_key = keys[0].split("_DepthWise")
-                                                                    # else:
-                                                                    #     in_key = keys[0]
                                                                     in_shape = self.modules[keys[0]]['shape_in']
                                                                     in_size = int(np.prod(np.array(in_shape[1:])))
                                                                     out_shape = self.modules[keys[12]]['shape_out']
@@ -1187,6 +1188,9 @@ class ModelFeatureMapsOnnx():
 
                                                             rates_graph[0,0] = float(l_configs[keys[0]][r1][5])
                                                             rates_graph[0,1] = float(l_configs[keys[0]][r1][6])
+                                                            in_module_ratio = rates_graph[0,1] / rates_graph[0,0]
+                                                            rates_graph[0,0] = min(rates_graph[0,0], membw_in)
+                                                            rates_graph[0,1] = min(rates_graph[0,1], membw_in * in_module_ratio)
 
                                                             rates_graph[1,1] = float(l_configs[keys[1]][c1][5])
                                                             rates_graph[1,2] = float(l_configs[keys[1]][c1][6])
@@ -1217,6 +1221,9 @@ class ModelFeatureMapsOnnx():
 
                                                             rates_graph[10,10] = float(l_configs[keys[10]][c4][5])
                                                             rates_graph[10,11] = float(l_configs[keys[10]][c4][6])
+                                                            out_module_ratio = rates_graph[10,11] / rates_graph[10,10]
+                                                            rates_graph[10,10] = min(rates_graph[10,10], membw_out)
+                                                            rates_graph[10,11] = min(rates_graph[10,11], membw_out * out_module_ratio)
 
                                                             bram_total = float(l_configs[keys[0]][r1][1]) + float(l_configs[keys[1]][c1][1]) + float(l_configs[keys[2]][b1][1]) + float(l_configs[keys[3]][r2][1]) + float(l_configs[keys[4]][c2][1]) + float(l_configs[keys[5]][b2][1]) + float(l_configs[keys[6]][se1][1]) + float(l_configs[keys[7]][sw1][1]) + float(l_configs[keys[8]][c3][1]) + float(l_configs[keys[9]][b3][1]) + float(l_configs[keys[10]][c4][1])
 
@@ -1228,12 +1235,6 @@ class ModelFeatureMapsOnnx():
                                                             rate_in = abs(rates_graph_balanced[0,0])
                                                             rate_out = abs(rates_graph_balanced[10,11])
                                                             
-                                                            # if len(keys[0].split("_PointWise")) > 1:
-                                                            #     in_key = keys[0].split("_PointWise")[0]
-                                                            # elif len(keys[0].split("_DepthWise")) > 1:
-                                                            #     in_key = keys[0].split("_DepthWise")
-                                                            # else:
-                                                            #     in_key = keys[0]
                                                             in_shape = self.modules[keys[0]]['shape_in']
                                                             in_size = int(np.prod(np.array(in_shape[1:])))
                                                             out_shape = self.modules[keys[10]]['shape_out']
@@ -1262,6 +1263,9 @@ class ModelFeatureMapsOnnx():
 
                                                         rates_graph[0,0] = float(l_configs[keys[0]][r1][5])
                                                         rates_graph[0,1] = float(l_configs[keys[0]][r1][6])
+                                                        in_module_ratio = rates_graph[0,1] / rates_graph[0,0]
+                                                        rates_graph[0,0] = min(rates_graph[0,0], membw_in)
+                                                        rates_graph[0,1] = min(rates_graph[0,1], membw_in * in_module_ratio)
 
                                                         rates_graph[1,1] = float(l_configs[keys[1]][c1][5])
                                                         rates_graph[1,2] = float(l_configs[keys[1]][c1][6])
@@ -1289,6 +1293,9 @@ class ModelFeatureMapsOnnx():
 
                                                         rates_graph[9,9] = float(l_configs[keys[9]][b3][5])
                                                         rates_graph[9,10] = float(l_configs[keys[9]][b3][6])
+                                                        out_module_ratio = rates_graph[9,10] / rates_graph[9,9]
+                                                        rates_graph[9,9] = min(rates_graph[9,9], membw_out)
+                                                        rates_graph[9,10] = min(rates_graph[9,10], membw_out * out_module_ratio)
 
                                                         bram_total = float(l_configs[keys[0]][r1][1]) + float(l_configs[keys[1]][c1][1]) + float(l_configs[keys[2]][b1][1]) + float(l_configs[keys[3]][r2][1]) + float(l_configs[keys[4]][c2][1]) + float(l_configs[keys[5]][b2][1]) + float(l_configs[keys[6]][se1][1]) + float(l_configs[keys[7]][sw1][1]) + float(l_configs[keys[8]][c3][1]) + float(l_configs[keys[9]][b3][1])
 
@@ -1300,12 +1307,6 @@ class ModelFeatureMapsOnnx():
                                                         rate_in = abs(rates_graph_balanced[0,0])
                                                         rate_out = abs(rates_graph_balanced[9,10])
                                                         
-                                                        # if len(keys[0].split("_PointWise")) > 1:
-                                                        #     in_key = keys[0].split("_PointWise")[0]
-                                                        # elif len(keys[0].split("_DepthWise")) > 1:
-                                                        #     in_key = keys[0].split("_DepthWise")
-                                                        # else:
-                                                        #     in_key = keys[0]
                                                         in_shape = self.modules[keys[0]]['shape_in']
                                                         in_size = int(np.prod(np.array(in_shape[1:])))
                                                         out_shape = self.modules[keys[9]]['shape_out']
@@ -1333,6 +1334,9 @@ class ModelFeatureMapsOnnx():
 
                                                     rates_graph[0,0] = float(l_configs[keys[0]][r1][5])
                                                     rates_graph[0,1] = float(l_configs[keys[0]][r1][6])
+                                                    in_module_ratio = rates_graph[0,1] / rates_graph[0,0]
+                                                    rates_graph[0,0] = min(rates_graph[0,0], membw_in)
+                                                    rates_graph[0,1] = min(rates_graph[0,1], membw_in * in_module_ratio)
 
                                                     rates_graph[1,1] = float(l_configs[keys[1]][c1][5])
                                                     rates_graph[1,2] = float(l_configs[keys[1]][c1][6])
@@ -1357,6 +1361,9 @@ class ModelFeatureMapsOnnx():
 
                                                     rates_graph[8,8] = float(l_configs[keys[8]][c3][5])
                                                     rates_graph[8,9] = float(l_configs[keys[8]][c3][6])
+                                                    out_module_ratio = rates_graph[8,9] / rates_graph[8,8]
+                                                    rates_graph[8,8] = min(rates_graph[8,8], membw_out)
+                                                    rates_graph[8,9] = min(rates_graph[8,9], membw_out * out_module_ratio)
 
                                                     bram_total = float(l_configs[keys[0]][r1][1]) + float(l_configs[keys[1]][c1][1]) + float(l_configs[keys[2]][b1][1]) + float(l_configs[keys[3]][r2][1]) + float(l_configs[keys[4]][c2][1]) + float(l_configs[keys[5]][b2][1]) + float(l_configs[keys[6]][se1][1]) + float(l_configs[keys[7]][sw1][1]) + float(l_configs[keys[8]][c3][1])
 
@@ -1368,12 +1375,6 @@ class ModelFeatureMapsOnnx():
                                                     rate_in = abs(rates_graph_balanced[0,0])
                                                     rate_out = abs(rates_graph_balanced[8,9])
                                                     
-                                                    # if len(keys[0].split("_PointWise")) > 1:
-                                                    #     in_key = keys[0].split("_PointWise")[0]
-                                                    # elif len(keys[0].split("_DepthWise")) > 1:
-                                                    #     in_key = keys[0].split("_DepthWise")
-                                                    # else:
-                                                    #     in_key = keys[0]
                                                     in_shape = self.modules[keys[0]]['shape_in']
                                                     in_size = int(np.prod(np.array(in_shape[1:])))
                                                     out_shape = self.modules[keys[8]]['shape_out']
@@ -1401,6 +1402,7 @@ class ModelFeatureMapsOnnx():
 
         sns.scatterplot(x=throughput_config, y=dsp_config, s=50)
         plt.axhline(y=100, color='r', linestyle='-')
+        plt.axhline(y=90, color='r', linestyle='--')
 
         print(np.unique(np.array(bram_config)))
         bram_tot = "{:.3f}".format(max(bram_config))
@@ -1710,8 +1712,9 @@ def main():
     onnx_modeling.create_modules()
 
     fname = args.model_name + '_onnx'
-    # onnx_modeling.create_design_points(file_name=fname, s_in=onnx_modeling.max_words_per_cycle//2, s_out=onnx_modeling.max_words_per_cycle//2)
-    onnx_modeling.create_design_points(file_name=fname, s_in=100, s_out=100)
+    onnx_modeling.create_design_points(file_name=fname, s_in=onnx_modeling.max_words_per_cycle//2, s_out=onnx_modeling.max_words_per_cycle//2)
+    #TODO: Additionaly to saving the per module results as regards the different configurations save the configurations themselves to use them and create on the fly the results during the layer creation on creating bigger layers.
+    # onnx_modeling.create_design_points(file_name=fname, s_in=10000, s_out=10000)
 
     drop_duplicates(file_name=fname, pareto=False)
 
@@ -1734,7 +1737,7 @@ def main():
     for n, l in enumerate(partition_layers):
         if len(l)<13:
             print("Evaluating Layer {}/{}".format(n+1, len(partition_layers)))
-            onnx_modeling.compose_layers(fname_pareto, l, n+1, fname, args.calculate_pareto)   
+            onnx_modeling.compose_layers(fname_pareto, l, n+1, fname, args.calculate_pareto, onnx_modeling.max_words_per_cycle//2, onnx_modeling.max_words_per_cycle//2)   
 
     # performance_graphs(file_name=fname, layers_to_plot=['Conv', 'Se', 'GlobalAveragePool'], calculate_pareto=args.calculate_pareto)
 
