@@ -45,6 +45,35 @@ class ModelFeatureMapsOnnx():
 
         # print(onnx.helper.printable_graph(self.onnx_model.graph))
 
+    def balance_module_rates_new(self, rate_graph):
+        
+        rate_ratio = [ abs(rate_graph[i,i]/rate_graph[i-1,i]) for i in range(1,rate_graph.shape[1]-1) ]
+        # print("RATE RATIO")
+        # print(rate_ratio)
+        # print("-"*50)
+        for i in range(1,rate_graph.shape[1]):
+            # start from end
+            layer = rate_graph.shape[1]-i
+
+            if abs(rate_graph[layer-1,layer]) > abs(rate_graph[layer-1,layer-1]):
+                # propogate forward
+                for j in range(layer,rate_graph.shape[1]):
+                        if(abs(rate_graph[j-1,j]) <= abs(rate_graph[j-1,j-1])):
+                            break
+                        rate_graph[j-1,j]   = abs(rate_graph[j-1,j-1])
+                        if j < rate_graph.shape[0]:
+                            rate_graph[j,j] = -rate_graph[j-1,j-1]*rate_ratio[j-1]
+
+            elif abs(rate_graph[layer-1,layer]) < abs(rate_graph[layer-1,layer-1]):
+                # propogate backward
+                for j in range(0,layer):
+                        if(abs(rate_graph[layer-j-1,layer-j]) >= abs(rate_graph[layer-j-1,layer-j-1])):
+                            break
+                        rate_graph[layer-j-1,layer-j-1]  = -abs(rate_graph[layer-j-1,layer-j])
+                        if layer-j-1 > 0:
+                            rate_graph[layer-j-2,layer-j-1] = -rate_graph[layer-j-1,layer-j-1]/rate_ratio[layer-1-j-1]
+        return rate_graph
+
     def balance_module_rates(self, rate_graph):
         
         rate_ratio = [ abs(rate_graph[i,i+1]/rate_graph[i,i]) for i in range(rate_graph.shape[0]) ]
@@ -258,7 +287,7 @@ class ModelFeatureMapsOnnx():
         kh = kernel_shape[3]
         kw = kernel_shape[4]
 
-        cin = kernel_shape[1]
+        cin = kernel_shape[1] * module['groups']
         cout = kernel_shape[0]
 
         muls_unrl = kd * kh * kw * fine
@@ -318,6 +347,30 @@ class ModelFeatureMapsOnnx():
             rate_in = abs(rates_graph[0,0])
             rate_out = abs(rates_graph[1,2])
 
+        if not depthwise:
+            out_in_ratio = (dout*hout*wout)/(din*hin*win)
+            rate_in_tst = 1/cout * out_in_ratio * coarse_in * coarse_out * fine 
+            rate_out_tst = 1/(cout*cin) * out_in_ratio * coarse_in * coarse_out * fine
+        else:
+            out_in_ratio = (dout*hout*wout)/(din*hin*win)
+            rate_in_tst = 1/cout * out_in_ratio * coarse_in * coarse_out * fine 
+            rate_out_tst = 1/cout * out_in_ratio * coarse_in * coarse_out * fine
+
+        if mem_bw_in < rate_in_tst:
+            logging.error("CONV OP: Memory bounded on reading input. Expected: {} - Max available: {}".format(rate_in_tst, mem_bw_in))
+        if mem_bw_out < rate_out_tst:
+            logging.error("CONV OP: Memory bounded on writing output. Expected: {} - Max available: {}".format(rate_out_tst, mem_bw_out))
+        rate_in_tst = min(rate_in_tst, mem_bw_in)
+        rate_out_tst = min(rate_out_tst, mem_bw_out)
+
+        # print("Shape In (Din, Hin, Win) = ({}, {}, {})".format(din, hin, win))
+        # print("Shape Out (Dout, Hout, Wout) = ({}, {}, {})".format(dout, hout, wout))
+        # print("Rate in old = {:.5f}. Rate out old = {:.5f}.".format(rate_in, rate_out))
+        # print("Rate in new = {:.5f}. Rate out new = {:.5f}.".format(rate_in_tst, rate_out_tst))
+
+        rate_in = rate_in_tst
+        rate_out = rate_out_tst
+
         if kd == 1 and kh == 1 and kw == 1:
             pb = 1
         else:
@@ -346,26 +399,22 @@ class ModelFeatureMapsOnnx():
         glavpool_rate_out = 1/(in_shape[2]*in_shape[3]*in_shape[4]) * mem_bw_in
         glavpool_mem = in_shape[1]
         glavpool_muls = 2 * mem_bw_in
+        # glavpool_depth = 
 
-        conv1_rate_in, conv1_rate_out, conv1_muls, conv1_adds, conv1_mem = self.conv_layer_config(module[conv1_key], coarse_in_1, coarse_out_1, fine1, s_in=glavpool_rate_out, s_out=1)
+        conv1_rate_in, conv1_rate_out, conv1_muls, conv1_adds, conv1_mem = self.conv_layer_config(module[conv1_key], coarse_in_1, coarse_out_1, fine1, s_in=glavpool_rate_out, s_out=10000)
 
         relu_rate_in = conv1_rate_out
         relu_rate_out = conv1_rate_out
 
-        conv2_rate_in, conv2_rate_out, conv2_muls, conv2_adds, conv2_mem = self.conv_layer_config(module[conv2_key], coarse_in_2, coarse_out_2, fine2, s_in=relu_rate_out, s_out=1)
+        conv2_rate_in, conv2_rate_out, conv2_muls, conv2_adds, conv2_mem = self.conv_layer_config(module[conv2_key], coarse_in_2, coarse_out_2, fine2, s_in=relu_rate_out, s_out=10000)
 
-        sigmoid_rate_in = max(1, conv2_rate_out)
-        sigmoid_rate_out = max(1, conv2_rate_out)
+        sigmoid_rate_in = conv2_rate_out
+        sigmoid_rate_out = conv2_rate_out
         sigmoid_dsps = max(3, math.ceil(3 * conv2_rate_out))
         
-        if sigmoid_rate_out > 1:
-            elemwise_mul_rate_in = 1 * mem_bw_out
-            elemwise_mul_rate_out = 1 * mem_bw_out
-            elemwise_mul_rate_dsps = 1 * mem_bw_out
-        else:
-            elemwise_mul_rate_in = 1
-            elemwise_mul_rate_out = 1
-            elemwise_mul_rate_dsps = 1 
+        elemwise_mul_rate_in = sigmoid_rate_out
+        elemwise_mul_rate_out = sigmoid_rate_out
+        elemwise_mul_rate_dsps = max(1, math.ceil(sigmoid_rate_out))
 
         rates_graph = np.zeros( shape=(6,7) , dtype=float )
         rates_graph[0,0] = glavpool_rate_in
@@ -395,7 +444,20 @@ class ModelFeatureMapsOnnx():
         rate_in = abs(rates_graph[0,0])
         rate_out = abs(rates_graph[5,6])
 
+        if mem_bw_in < rate_in:
+            logging.error("SE OP: Memory bounded on reading input. Expected: {} - Max available: {}".format(rate_in, mem_bw_in))
+        if mem_bw_out < rate_out:
+            logging.error("SE OP: Memory bounded on writing output. Expected: {} - Max available: {}".format(rate_out, mem_bw_out))
+        rate_in = min(rate_in, mem_bw_in)
+        rate_out = min(rate_out, mem_bw_out)
+
         return rate_in, rate_out, glavpool_muls + conv1_muls + conv2_muls + sigmoid_dsps + elemwise_mul_rate_dsps, conv1_adds + conv2_adds, glavpool_mem + conv1_mem + conv2_mem 
+
+    def get_layer_from_id(self, layer_id):
+        for k in self.layers.keys():
+            if layer_id == int(self.layers[k]['output_id']):
+                return self.layers[k], k
+        return None, None
 
     def create_modules(self):
         se_module = deque(maxlen=6)
@@ -411,6 +473,19 @@ class ModelFeatureMapsOnnx():
             operation = self.layers[k]['operation']
             input_shape = self.layers[k]['input'][0]
             output_shape = self.layers[k]['output']
+            
+            if len(self.layers[k]['input']) > 1:
+                in1_layer, in1_layer_name = self.get_layer_from_id(int(self.layers[k]['input_id'][0]))
+                in2_layer, in2_layer_name = self.get_layer_from_id(int(self.layers[k]['input_id'][1]))
+                oldest_input = min(int(in1_layer['output_id']), int(in2_layer['output_id'])) if (in1_layer is not None and in2_layer is not None) else int(self.layers[k]['output_id'])
+                # print("Layer name = {} ({}). Input_0 = {} ({}). Input_1 = {} ({})".format(name, self.layers[k]['output_id'], in1_layer_name, self.layers[k]['input_id'][0], in2_layer_name, self.layers[k]['input_id'][1]))
+            else:
+                in1_layer, in1_layer_name = self.get_layer_from_id(int(self.layers[k]['input_id'][0]))
+                oldest_input = int(in1_layer['output_id']) if in1_layer is not None else int(self.layers[k]['output_id'])
+                # print("Layer name = {} ({}). Input = {} ({})".format(name, self.layers[k]['output_id'], in1_layer_name, self.layers[k]['input_id'][0]))
+            if int(self.layers[k]['output_id']) - oldest_input > 2:
+                print("Identified a branching behaviour")
+
             if operation == 'Mul' or operation == 'Add':
                 input_shape = output_shape
             kernel = self.layers[k]['kernel']
@@ -660,6 +735,8 @@ class ModelFeatureMapsOnnx():
                     operation = self.modules[k]['operation']
                     logging.error("Layer: {} -> Operation: {}.".format(name, operation))
 
+                    # if not operation == 'Conv' and not operation == 'SqueezeExcitation':
+                    #     continue
                     if operation == 'Conv':
                         out_shape = self.modules[name]['shape_out']
                         dout = out_shape[2]
@@ -891,7 +968,7 @@ class ModelFeatureMapsOnnx():
                                                 logging.warning("Fold = {}".format(folding_name))
                                                 
                                                 #TODO: The input mem bw on this layer is very important so we add the 9/10 of the total bw as the input bw and only the 1/10 as the output bw. When this layer is combined with others in a bigger partition the input rate of this layer will be driven by the output rate of the previous on the graph.
-                                                rate_in, rate_out, muls, adds, mem = self.se_layer_config(self.modules[name], coarse_in_1, coarse_out_1, coarse_in_2, coarse_out_2, fine_1, fine_2, s_in=s_in+s_out-1, s_out=1)
+                                                rate_in, rate_out, muls, adds, mem = self.se_layer_config(self.modules[name], coarse_in_1, coarse_out_1, coarse_in_2, coarse_out_2, fine_1, fine_2, s_in=s_in, s_out=s_out)
 
                                                 #TODO: Added worst possible case for buffering on se module i.e., buffer the whole feature map and all of the channels. Should fix this by checking the depth/latency of the left branch in order to calculate the exact buffering that is gonna needed in each se module.
                                                 #TODO: Another solution is to read again from off-chip memory which will prevent the buffering i.e., reduce the BRAM needs BUT will reduce the mem bw in total as well since we need to first write the results (in a bigger layer-wise partition) and the read them again i.e., will probably need to have mem_bw / 4 instead of mem_bw / 2 in each point that we access the off-chip memory.
@@ -974,6 +1051,8 @@ class ModelFeatureMapsOnnx():
                     csv_writer.writerow(["-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"])
 
     def compose_layers(self, file_name, layers_names, final_name, model_name):
+        sns.set(rc={'figure.figsize':(15,8)})
+        sns.set_style("darkgrid", {"axes.facecolor": ".85"})
         l_configs = {}
         for l in layers_names:
             l_configs[l] = []
@@ -1374,7 +1453,7 @@ def plot_graph(x, y, leg, name, type, model_name):
         pareto_front_df.sort_values(0, inplace=True)
         pareto_front = pareto_front_df.values
 
-        sns.scatterplot(x=np.array(x), y=np.array(y[0]), hue=leg, style=leg, s=50)
+        sns.scatterplot(x=np.array(x), y=np.array(y[0]), hue=leg, style=leg, s=75)
         sns.lineplot(x=pareto_front[:, 0], y=pareto_front[:, 1], color='red')
 
         plt.title(name)
@@ -1399,7 +1478,7 @@ def plot_graph(x, y, leg, name, type, model_name):
         plt.clf()
     elif type == 'Memory Bandwidth':
 
-        sns.scatterplot(x=np.array(x), y=np.array(y[0]), hue=leg, style=leg, s=50)
+        sns.scatterplot(x=np.array(x), y=np.array(y[0]), hue=leg, style=leg, s=75)
 
         plt.title(name)
         plt.xlabel('Throughtput(outputs/sec)')
@@ -1413,7 +1492,7 @@ def plot_graph(x, y, leg, name, type, model_name):
         plt.clf()
 
 
-        sns.scatterplot(x=np.array(x), y=np.array(y[1]), hue=leg, style=leg, s=50)
+        sns.scatterplot(x=np.array(x), y=np.array(y[1]), hue=leg, style=leg, s=75)
 
         plt.title(name)
         plt.xlabel('Throughtput(outputs/sec)')
@@ -1428,7 +1507,7 @@ def plot_graph(x, y, leg, name, type, model_name):
 
 def performance_graphs(file_name="x3d_m", layer_to_plot=None):
     
-    csv_file = os.path.join(os.getcwd(), 'fpga_modeling_reports', file_name + '.csv')
+    csv_file = os.path.join(os.getcwd(), 'fpga_modeling_reports', file_name + '_drop_duplicates.csv')
     with open(csv_file, mode='r') as model_results:
         csv_reader = csv.reader(model_results, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
         # csv_reader = csv.DictReader(model_results)
@@ -1480,6 +1559,68 @@ def performance_graphs(file_name="x3d_m", layer_to_plot=None):
         plot_graph(throughput, [dsp_util], folding, prev_layer, 'DSPS', file_name)
         plot_graph(throughput, [mem_bw_in, mem_bw_out], folding, prev_layer, 'Memory Bandwidth', file_name)
 
+def drop_duplicates(file_name="x3d_m", pareto=False):
+    
+    if pareto:
+        csv_file_drop = os.path.join(os.getcwd(), 'fpga_modeling_reports', file_name + '_drop_duplicates_pareto.csv')
+    else:
+        csv_file_drop = os.path.join(os.getcwd(), 'fpga_modeling_reports', file_name + '_drop_duplicates.csv')
+    with open(csv_file_drop, mode='w') as model_results_drop:
+        csv_writer = csv.writer(model_results_drop, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+        csv_writer.writerow(["Layer", "Folding", "On-Chip Memory(BRAM %)", "DSPS %", "Consumption(inputs/sec)", "Throughtput(outputs/sec)", "Memory Bandwidth In(words/cycle)", "Memory Bandwidth Out(words/cycle)", "On-Chip Memory(KB)", "On-Chip Memory(BRAM)", "Memory Bandwidth In(GBs/sec)", "Memory Bandwidth Out(GBs/sec)", "Multipliers", "Adders", "DSPS", "Throughtput(words/cycle)", "Throughtput(GOps/sec)"])
+
+        if pareto:
+            csv_file = os.path.join(os.getcwd(), 'fpga_modeling_reports', file_name + '_pareto.csv')
+        else:
+            csv_file = os.path.join(os.getcwd(), 'fpga_modeling_reports', file_name + '.csv')
+        with open(csv_file, mode='r') as model_results:
+            csv_reader = csv.reader(model_results, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+
+            cols = {}
+            for i, c in enumerate(next(csv_reader)):
+                cols[c] = i
+            print(cols)
+
+            rows = []
+
+            first_layer = True
+            for i, row in enumerate(csv_reader):
+                if "-" in row :
+                    continue
+
+                if first_layer and i == 0:
+                    prev_layer = row[cols['Layer']]
+                    first_layer = False
+
+                if row[cols['Layer']] == prev_layer:
+                    rows.append(row)
+                else:
+                    config = []
+                    for j, r in enumerate(rows):
+                        config.append(rows[j][1])
+                        del(rows[j][1])
+                    new_rows = []
+                    rows_idx = []
+                    for j, r in enumerate(rows):
+                        if r not in new_rows:
+                            new_rows.append(r)
+                            rows_idx.append(j)
+                    final_rows = []
+                    for j, r in enumerate(new_rows):
+                        final_row = deque(r.copy())
+                        final_row.append(config[rows_idx[j]])
+                        final_row.rotate(1)
+                        final_row[1], final_row[0] =  final_row[0], final_row[1]
+                        final_rows.append(list(final_row))
+                    for fr in final_rows:
+                        csv_writer.writerow(fr)
+                    csv_writer.writerow(["-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"])
+                    rows.clear()
+                    
+                    rows.append(row)
+
+                prev_layer = row[cols['Layer']]
+
 def get_paretto(file_name="x3d_m"):
     
     csv_file_par = os.path.join(os.getcwd(), 'fpga_modeling_reports', file_name + '_pareto.csv')
@@ -1488,7 +1629,7 @@ def get_paretto(file_name="x3d_m"):
 
         csv_writer_par.writerow(["Layer", "Folding", "On-Chip Memory(BRAM %)", "DSPS %", "Consumption(inputs/sec)", "Throughtput(outputs/sec)", "Memory Bandwidth In(words/cycle)", "Memory Bandwidth Out(words/cycle)", "On-Chip Memory(KB)", "On-Chip Memory(BRAM)", "Memory Bandwidth In(GBs/sec)", "Memory Bandwidth Out(GBs/sec)", "Multipliers", "Adders", "DSPS", "Throughtput(words/cycle)", "Throughtput(GOps/sec)"])
 
-        csv_file = os.path.join(os.getcwd(), 'fpga_modeling_reports', file_name + '.csv')
+        csv_file = os.path.join(os.getcwd(), 'fpga_modeling_reports', file_name + '_drop_duplicates.csv')
         with open(csv_file, mode='r') as model_results:
             csv_reader = csv.reader(model_results, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
 
@@ -1602,19 +1743,25 @@ def main():
     onnx_modeling.create_modules()
 
     fname = args.model_name + '_onnx'
-    onnx_modeling.create_design_points(file_name=fname, s_in=onnx_modeling.max_words_per_cycle//2, s_out=onnx_modeling.max_words_per_cycle//2)
+    # onnx_modeling.create_design_points(file_name=fname, s_in=onnx_modeling.max_words_per_cycle//2, s_out=onnx_modeling.max_words_per_cycle//2)
+    onnx_modeling.create_design_points(file_name=fname, s_in=100, s_out=100)
+
+    drop_duplicates(file_name=fname, pareto=False)
 
     get_paretto(file_name=fname)
+
+    drop_duplicates(file_name=fname, pareto=True)
 
     #TODO: (URGENT) Take into consideration the buffering needed in branching or read again from the off-chip memory and reduce the bw in the individual layers.
     partition_layers = get_partition_layers(onnx_modeling.modules, args.model_name)
 
-    fname_pareto = fname + "_pareto"
+    fname_pareto = fname + "_drop_duplicates_pareto"
     for n, l in enumerate(partition_layers):
         print("Evaluating Layer {}/{}".format(n+1, len(partition_layers)))
-        onnx_modeling.compose_layers(fname_pareto, l, n+1, fname)   
+        if len(l)<13:
+            onnx_modeling.compose_layers(fname_pareto, l, n+1, fname)   
 
-    # performance_graphs(file_name=fname, layer_to_plot=None
+    # performance_graphs(file_name=fname, layer_to_plot=None)
 
 if __name__ == '__main__':
     main()
