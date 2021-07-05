@@ -5,6 +5,7 @@ import math
 import coloredlogs
 import logging
 import onnx
+import concurrent.futures
 
 import numpy as np
 import seaborn as sns
@@ -44,6 +45,9 @@ class ModelFeatureMapsOnnx():
         onnx.checker.check_model(self.onnx_model)
 
         # print(onnx.helper.printable_graph(self.onnx_model.graph))
+
+    def thread_helper(self, arguments):
+        self.compose_layers(arguments[0], arguments[1], arguments[2], arguments[3], arguments[4])
 
     def balance_module_rates_new(self, rate_graph):
         
@@ -1048,9 +1052,9 @@ class ModelFeatureMapsOnnx():
 
                             self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem)
                     
-                    csv_writer.writerow(["-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"])
+                    # csv_writer.writerow(["-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"])
 
-    def compose_layers(self, file_name, layers_names, final_name, model_name):
+    def compose_layers(self, file_name, layers_names, final_name, model_name, calculate_pareto):
         sns.set(rc={'figure.figsize':(15,8)})
         sns.set_style("darkgrid", {"axes.facecolor": ".85"})
         l_configs = {}
@@ -1382,21 +1386,25 @@ class ModelFeatureMapsOnnx():
                                                     bram_config.append(bram_total)
                                                     throughput_config.append(thr_out)
 
-        scores = np.zeros((len(throughput_config), 2))
-        scores[:,0] = throughput_config
-        scores[:,1] = dsp_config
-        pareto = find_pareto(scores)
-        pareto_front = scores[pareto]
+        if calculate_pareto:
+            scores = np.zeros((len(throughput_config), 2))
+            scores[:,0] = throughput_config
+            scores[:,1] = dsp_config
+            pareto = find_pareto(scores)
+            pareto_front = scores[pareto]
 
-        pareto_front_df = pd.DataFrame(pareto_front)
-        pareto_front_df.sort_values(0, inplace=True)
-        pareto_front = pareto_front_df.values
-        
+            pareto_front_df = pd.DataFrame(pareto_front)
+            pareto_front_df.sort_values(0, inplace=True)
+            pareto_front = pareto_front_df.values
+
+            sns.lineplot(x=pareto_front[:, 0], y=pareto_front[:, 1], color='red')
+
         sns.scatterplot(x=throughput_config, y=dsp_config, s=50)
-        sns.lineplot(x=pareto_front[:, 0], y=pareto_front[:, 1], color='red')
+        plt.axhline(y=100, color='r', linestyle='-')
+
         print(np.unique(np.array(bram_config)))
         bram_tot = "{:.3f}".format(max(bram_config))
-                
+
         plt.title(str(final_name) + " (" + bram_tot + " % BRAM Usage)")
         plt.xlabel('Throughtput(outputs/sec)')
         plt.xscale("log")
@@ -1430,7 +1438,7 @@ def find_pareto(scores):
     # Return ids of scenarios on pareto front
     return population_ids[pareto_front]
 
-def plot_graph(x, y, leg, name, type, model_name):
+def plot_graph(x, y, leg, name, type, model_name, calculate_pareto):
     se_layer = True if "Se" in name.split("_") else False
     sns.set(rc={'figure.figsize':(15,8)})
     sns.set_style("darkgrid", {"axes.facecolor": ".85"})
@@ -1443,18 +1451,20 @@ def plot_graph(x, y, leg, name, type, model_name):
         os.makedirs(mem_bw_dir)
     if type == 'DSPS':
 
-        scores = np.zeros((len(x), 2))
-        scores[:,0] = x
-        scores[:,1] = y[0]
-        pareto = find_pareto(scores)
-        pareto_front = scores[pareto]
+        if calculate_pareto:
+            scores = np.zeros((len(x), 2))
+            scores[:,0] = x
+            scores[:,1] = y[0]
+            pareto = find_pareto(scores)
+            pareto_front = scores[pareto]
 
-        pareto_front_df = pd.DataFrame(pareto_front)
-        pareto_front_df.sort_values(0, inplace=True)
-        pareto_front = pareto_front_df.values
+            pareto_front_df = pd.DataFrame(pareto_front)
+            pareto_front_df.sort_values(0, inplace=True)
+            pareto_front = pareto_front_df.values
+
+            sns.lineplot(x=pareto_front[:, 0], y=pareto_front[:, 1], color='red')
 
         sns.scatterplot(x=np.array(x), y=np.array(y[0]), hue=leg, style=leg, s=75)
-        sns.lineplot(x=pareto_front[:, 0], y=pareto_front[:, 1], color='red')
 
         plt.title(name)
         plt.xlabel('Throughtput(outputs/sec)')
@@ -1466,10 +1476,13 @@ def plot_graph(x, y, leg, name, type, model_name):
         if max(x) > 100:
             plt.xscale("log")
         if se_layer:
-            legd = []
-            for l in pareto:
-                legd.append(leg[l])
-            plt.legend(legd, frameon=False, prop={"size":8}, loc='upper right', bbox_to_anchor=(1.11, 1.12), borderaxespad=0.)
+            if calculate_pareto:
+                legd = []
+                for l in pareto:
+                    legd.append(leg[l])
+                plt.legend(legd, frameon=False, prop={"size":8}, loc='upper right', bbox_to_anchor=(1.11, 1.12), borderaxespad=0.)
+            else:
+                plt.legend([],[], frameon=False)
         else:
             plt.legend(frameon=False, prop={"size":8}, loc='upper right', bbox_to_anchor=(1.11, 1.12), borderaxespad=0.)
 
@@ -1505,12 +1518,11 @@ def plot_graph(x, y, leg, name, type, model_name):
         plt.savefig(os.path.join(mem_bw_dir, file_name))
         plt.clf()
 
-def performance_graphs(file_name="x3d_m", layer_to_plot=None):
+def performance_graphs(file_name="x3d_m", layers_to_plot=None, calculate_pareto=False):
     
-    csv_file = os.path.join(os.getcwd(), 'fpga_modeling_reports', file_name + '_drop_duplicates.csv')
+    csv_file = os.path.join(os.getcwd(), 'fpga_modeling_reports', file_name + '.csv')
     with open(csv_file, mode='r') as model_results:
         csv_reader = csv.reader(model_results, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
-        # csv_reader = csv.DictReader(model_results)
 
         cols = {}
         for i, c in enumerate(next(csv_reader)):
@@ -1525,10 +1537,11 @@ def performance_graphs(file_name="x3d_m", layer_to_plot=None):
 
         first_layer = True
         for i, row in enumerate(csv_reader):
-            if "-" in row or (layer_to_plot is not None and row[cols['Layer']] not in layer_to_plot):
+            operation = row[cols['Layer']].split("_")[0]
+            if "-" in row or (layers_to_plot is not None and operation not in layers_to_plot):
                 continue
 
-            if first_layer and (i == 0 or (layer_to_plot is not None and row[cols['Layer']] in layer_to_plot)):
+            if first_layer and (i == 0 or (layers_to_plot is not None and operation in layers_to_plot)):
                 prev_layer = row[cols['Layer']]
                 first_layer = False
 
@@ -1539,8 +1552,8 @@ def performance_graphs(file_name="x3d_m", layer_to_plot=None):
                 mem_bw_out.append(float(row[cols['Memory Bandwidth Out(GBs/sec)']]))
                 throughput.append(float(row[cols['Throughtput(outputs/sec)']]))
             else:
-                plot_graph(throughput, [dsp_util], folding, prev_layer, 'DSPS', file_name)
-                plot_graph(throughput, [mem_bw_in, mem_bw_out], folding, prev_layer, 'Memory Bandwidth', file_name)
+                plot_graph(throughput, [dsp_util], folding, prev_layer, 'DSPS', file_name, calculate_pareto=calculate_pareto)
+                plot_graph(throughput, [mem_bw_in, mem_bw_out], folding, prev_layer, 'Memory Bandwidth', file_name, calculate_pareto=calculate_pareto)
 
                 folding.clear()
                 dsp_util.clear()
@@ -1556,70 +1569,23 @@ def performance_graphs(file_name="x3d_m", layer_to_plot=None):
 
             prev_layer = row[cols['Layer']]
 
-        plot_graph(throughput, [dsp_util], folding, prev_layer, 'DSPS', file_name)
-        plot_graph(throughput, [mem_bw_in, mem_bw_out], folding, prev_layer, 'Memory Bandwidth', file_name)
+        plot_graph(throughput, [dsp_util], folding, prev_layer, 'DSPS', file_name, calculate_pareto=calculate_pareto)
+        plot_graph(throughput, [mem_bw_in, mem_bw_out], folding, prev_layer, 'Memory Bandwidth', file_name, calculate_pareto=calculate_pareto)
 
 def drop_duplicates(file_name="x3d_m", pareto=False):
     
     if pareto:
-        csv_file_drop = os.path.join(os.getcwd(), 'fpga_modeling_reports', file_name + '_drop_duplicates_pareto.csv')
+        csv_file_read = os.path.join(os.getcwd(), 'fpga_modeling_reports', file_name + '_pareto.csv')
     else:
-        csv_file_drop = os.path.join(os.getcwd(), 'fpga_modeling_reports', file_name + '_drop_duplicates.csv')
-    with open(csv_file_drop, mode='w') as model_results_drop:
-        csv_writer = csv.writer(model_results_drop, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
-        csv_writer.writerow(["Layer", "Folding", "On-Chip Memory(BRAM %)", "DSPS %", "Consumption(inputs/sec)", "Throughtput(outputs/sec)", "Memory Bandwidth In(words/cycle)", "Memory Bandwidth Out(words/cycle)", "On-Chip Memory(KB)", "On-Chip Memory(BRAM)", "Memory Bandwidth In(GBs/sec)", "Memory Bandwidth Out(GBs/sec)", "Multipliers", "Adders", "DSPS", "Throughtput(words/cycle)", "Throughtput(GOps/sec)"])
+        csv_file_read = os.path.join(os.getcwd(), 'fpga_modeling_reports', file_name + '.csv')
 
-        if pareto:
-            csv_file = os.path.join(os.getcwd(), 'fpga_modeling_reports', file_name + '_pareto.csv')
-        else:
-            csv_file = os.path.join(os.getcwd(), 'fpga_modeling_reports', file_name + '.csv')
-        with open(csv_file, mode='r') as model_results:
-            csv_reader = csv.reader(model_results, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+    data = pd.read_csv(csv_file_read)
+    columns = data.columns.tolist()
+    del(columns[1])
 
-            cols = {}
-            for i, c in enumerate(next(csv_reader)):
-                cols[c] = i
-            print(cols)
-
-            rows = []
-
-            first_layer = True
-            for i, row in enumerate(csv_reader):
-                if "-" in row :
-                    continue
-
-                if first_layer and i == 0:
-                    prev_layer = row[cols['Layer']]
-                    first_layer = False
-
-                if row[cols['Layer']] == prev_layer:
-                    rows.append(row)
-                else:
-                    config = []
-                    for j, r in enumerate(rows):
-                        config.append(rows[j][1])
-                        del(rows[j][1])
-                    new_rows = []
-                    rows_idx = []
-                    for j, r in enumerate(rows):
-                        if r not in new_rows:
-                            new_rows.append(r)
-                            rows_idx.append(j)
-                    final_rows = []
-                    for j, r in enumerate(new_rows):
-                        final_row = deque(r.copy())
-                        final_row.append(config[rows_idx[j]])
-                        final_row.rotate(1)
-                        final_row[1], final_row[0] =  final_row[0], final_row[1]
-                        final_rows.append(list(final_row))
-                    for fr in final_rows:
-                        csv_writer.writerow(fr)
-                    csv_writer.writerow(["-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"])
-                    rows.clear()
-                    
-                    rows.append(row)
-
-                prev_layer = row[cols['Layer']]
+    data_droped = data.drop_duplicates(subset=columns)
+    os.remove(csv_file_read)
+    data_droped.to_csv(csv_file_read, index=False)
 
 def get_paretto(file_name="x3d_m"):
     
@@ -1629,7 +1595,7 @@ def get_paretto(file_name="x3d_m"):
 
         csv_writer_par.writerow(["Layer", "Folding", "On-Chip Memory(BRAM %)", "DSPS %", "Consumption(inputs/sec)", "Throughtput(outputs/sec)", "Memory Bandwidth In(words/cycle)", "Memory Bandwidth Out(words/cycle)", "On-Chip Memory(KB)", "On-Chip Memory(BRAM)", "Memory Bandwidth In(GBs/sec)", "Memory Bandwidth Out(GBs/sec)", "Multipliers", "Adders", "DSPS", "Throughtput(words/cycle)", "Throughtput(GOps/sec)"])
 
-        csv_file = os.path.join(os.getcwd(), 'fpga_modeling_reports', file_name + '_drop_duplicates.csv')
+        csv_file = os.path.join(os.getcwd(), 'fpga_modeling_reports', file_name + '.csv')
         with open(csv_file, mode='r') as model_results:
             csv_reader = csv.reader(model_results, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
 
@@ -1663,7 +1629,7 @@ def get_paretto(file_name="x3d_m"):
                     
                     for p in pareto:
                         csv_writer_par.writerow(rows[p])
-                    csv_writer_par.writerow(["-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"])
+                    # csv_writer_par.writerow(["-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"])
                     rows.clear()
                     
                     rows.append(row)
@@ -1680,7 +1646,7 @@ def get_paretto(file_name="x3d_m"):
             
             for p in pareto:
                 csv_writer_par.writerow(rows[p])
-            csv_writer_par.writerow(["-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"])
+            # csv_writer_par.writerow(["-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"])
 
 def get_partition_layers(layers, model_name):
     final_layers = []
@@ -1719,6 +1685,7 @@ def parse_args():
     parser.add_argument('model_name', help='name of the har model')
     parser.add_argument('config', help='test config file path')
     parser.add_argument('--use_frames', action='store_true', help='whether to use video decoder or raw frame decoder')
+    parser.add_argument('--calculate_pareto', action='store_true', help='whether to calculate and plot pareto front')
     parser.add_argument('--checkpoint', default=None, help='checkpoint file')
     parser.add_argument('--label', default=None, help='label file')
     parser.add_argument('--device', type=str, default='cuda:0', help='CPU/CUDA device option')
@@ -1755,13 +1722,21 @@ def main():
     #TODO: (URGENT) Take into consideration the buffering needed in branching or read again from the off-chip memory and reduce the bw in the individual layers.
     partition_layers = get_partition_layers(onnx_modeling.modules, args.model_name)
 
-    fname_pareto = fname + "_drop_duplicates_pareto"
-    for n, l in enumerate(partition_layers):
-        print("Evaluating Layer {}/{}".format(n+1, len(partition_layers)))
-        if len(l)<13:
-            onnx_modeling.compose_layers(fname_pareto, l, n+1, fname)   
+    fname_pareto = fname + "_pareto"
+    
+    # args = list()
+    # for n, l in enumerate(partition_layers):
+    #     args.append((fname_pareto, l, n+1, fname,))
+    # with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+    #     for _ in executor.map(onnx_modeling.thread_helper, args):
+    #         pass
 
-    # performance_graphs(file_name=fname, layer_to_plot=None)
+    for n, l in enumerate(partition_layers):
+        if len(l)<13:
+            print("Evaluating Layer {}/{}".format(n+1, len(partition_layers)))
+            onnx_modeling.compose_layers(fname_pareto, l, n+1, fname, args.calculate_pareto)   
+
+    # performance_graphs(file_name=fname, layers_to_plot=['Conv', 'Se', 'GlobalAveragePool'], calculate_pareto=args.calculate_pareto)
 
 if __name__ == '__main__':
     main()
