@@ -22,7 +22,7 @@ from functools import reduce
 
 coloredlogs.install(level='CRITICAL')
 logging.basicConfig(level=logging.CRITICAL)
-np.set_printoptions(precision=5, suppress=True, linewidth=120)
+np.set_printoptions(precision=5, suppress=True, linewidth=150)
 
 
 class ModelFeatureMapsOnnx():
@@ -49,7 +49,7 @@ class ModelFeatureMapsOnnx():
         # print(onnx.helper.printable_graph(self.onnx_model.graph))
 
     def thread_helper(self, arguments):
-        self.compose_layers(arguments[0], arguments[1], arguments[2], arguments[3], arguments[4], arguments[5], arguments[6])
+        self.compose_layers(arguments[0], arguments[1], arguments[2], arguments[3], arguments[4], arguments[5], arguments[6], arguments[7])
 
     def balance_module_rates_new(self, rate_graph):
         
@@ -372,9 +372,9 @@ class ModelFeatureMapsOnnx():
             depthwise = True
 
         if not depthwise:
-            rates_graph = np.zeros( shape=(3,4) , dtype=float )
+            rates_graph = np.zeros( shape=(4,5) , dtype=float )
         else:
-            rates_graph = np.zeros( shape=(2,3) , dtype=float )
+            rates_graph = np.zeros( shape=(3,4) , dtype=float )
 
         # The convolution operation is a Layer and is composed of the following modules: Sliding window, Conv, Accumulator 
 
@@ -386,27 +386,32 @@ class ModelFeatureMapsOnnx():
             rin_sw = 1
             rout_sw = (dout*hout*wout)/(din*hin*win)
         rates_graph[0,0] = rin_sw * coarse_in
-        rates_graph[0,1] = rout_sw * coarse_in
+        rates_graph[0,1] = rout_sw * (kd * kh * kw) * coarse_in
         in_module_ratio = rates_graph[0,1] / rates_graph[0,0]
         rates_graph[0,0] = min(rates_graph[0,0], mem_bw_in)
-        rates_graph[0,1] = min(rates_graph[0,1], mem_bw_in * in_module_ratio)
+        rates_graph[0,1] = rates_graph[0,0] * in_module_ratio
+        assert math.isclose(in_module_ratio, rates_graph[0,1] / rates_graph[0,0]), "wrong calculation of ratio"
+
+        rates_graph[1,1] = 1 * rates_graph[0,1]
+        rates_graph[1,2] = 1 * rates_graph[0,1] * coarse_out
 
         # Rates for the Conv module
         # TODO: Check if we can add another layer of parallelization here above the coarse in/out. When the rate out from previous layer is greater than the rate in in conv can we parallelize more to increase the throughput further since we have the data to do it?
-        rin_conv = fine/cout
-        rout_conv = fine
-        rates_graph[1,1] = rin_conv * coarse_out
-        rates_graph[1,2] = rout_conv * coarse_out
+        rin_conv = (fine * rates_graph[1,2])/cout
+        rout_conv = fine * rates_graph[1,2]
+        rates_graph[2,2] = rin_conv
+        rates_graph[2,3] = rout_conv / (kd * kh * kw)
         
         if not depthwise:
             # Rates for the Accumulator module
-            rin_accum = 1 * rates_graph[1,2]
-            rout_accum = 1/cin * rates_graph[1,2]
-            rates_graph[2,2] = rin_accum
-            rates_graph[2,3] = rout_accum
-            out_module_ratio = rates_graph[2,3] / rates_graph[2,2]
-            rates_graph[2,2] = min(rates_graph[2,2], mem_bw_out)
-            rates_graph[2,3] = min(rates_graph[2,3], mem_bw_out * out_module_ratio) 
+            rin_accum = 1 * rates_graph[2,3]
+            rout_accum = (1 * rates_graph[2,3])/cin
+            rates_graph[3,3] = rin_accum
+            rates_graph[3,4] = rout_accum
+            out_module_ratio = rates_graph[3,4] / rates_graph[3,3]
+            rates_graph[3,4] = min(rates_graph[3,4], mem_bw_out)
+            rates_graph[3,3] = rates_graph[3,4] / out_module_ratio
+            assert math.isclose(out_module_ratio, rates_graph[3,4] / rates_graph[3,3]), "wrong calculation of ratio"
             # print("CONV RATE GRAPH")
             # print(rates_graph)
             # print("-"*50)
@@ -414,11 +419,12 @@ class ModelFeatureMapsOnnx():
             # print(rates_graph)
             # print("=="*50)
             rate_in = abs(rates_graph[0,0])
-            rate_out = abs(rates_graph[2,3])
+            rate_out = abs(rates_graph[3,4])
         else:
-            out_module_ratio = rates_graph[1,2] / rates_graph[1,1]
-            rates_graph[1,1] = min(rates_graph[1,1], mem_bw_out)
-            rates_graph[1,2] = min(rates_graph[1,2], mem_bw_out * out_module_ratio) 
+            out_module_ratio = rates_graph[2,3] / rates_graph[2,2]
+            rates_graph[2,3] = min(rates_graph[2,3], mem_bw_out)
+            rates_graph[2,2] = rates_graph[2,3] / out_module_ratio
+            assert math.isclose(out_module_ratio, rates_graph[2,3] / rates_graph[2,2]), "wrong calculation of ratio"
             # print("CONV RATE GRAPH (DW)")
             # print(rates_graph)
             # print("-"*50)
@@ -426,23 +432,27 @@ class ModelFeatureMapsOnnx():
             # print(rates_graph)
             # print("=="*50)
             rate_in = abs(rates_graph[0,0])
-            rate_out = abs(rates_graph[1,2])
+            rate_out = abs(rates_graph[2,3])
 
         if not depthwise:
             out_in_ratio = (dout*hout*wout)/(din*hin*win)
             rate_in_tst = 1/cout * out_in_ratio * coarse_in * coarse_out * fine 
-            rate_out_tst = 1/(cout*cin) * out_in_ratio * coarse_in * coarse_out * fine
+            rate_out_tst = 1/cin * out_in_ratio * coarse_in * coarse_out * fine
         else:
             out_in_ratio = (dout*hout*wout)/(din*hin*win)
             rate_in_tst = 1/cout * out_in_ratio * coarse_in * coarse_out * fine 
-            rate_out_tst = 1/cout * out_in_ratio * coarse_in * coarse_out * fine
+            rate_out_tst = 1 * out_in_ratio * coarse_in * coarse_out * fine
 
+        out_module_ratio = rate_out_tst/rate_in_tst
         if mem_bw_in < rate_in_tst:
             logging.error("CONV OP: Memory bounded on reading input. Expected: {} - Max available: {}".format(rate_in_tst, mem_bw_in))
-        if mem_bw_out < rate_out_tst:
-            logging.error("CONV OP: Memory bounded on writing output. Expected: {} - Max available: {}".format(rate_out_tst, mem_bw_out))
         rate_in_tst = min(rate_in_tst, mem_bw_in)
-        rate_out_tst = min(rate_out_tst, mem_bw_out)
+        rate_out_tst_new = rate_in_tst * out_module_ratio
+        if mem_bw_out < rate_out_tst_new:
+            logging.error("CONV OP: Memory bounded on writing output. Expected: {} - Max available: {}".format(rate_out_tst, mem_bw_out))
+        rate_out_tst = min(rate_out_tst_new, mem_bw_out)
+        rate_in_tst = rate_out_tst / out_module_ratio
+        assert math.isclose(out_module_ratio, rate_out_tst/rate_in_tst), "wrong calculation of ratio"
 
         # print("Shape In (Din, Hin, Win) = ({}, {}, {})".format(din, hin, win))
         # print("Shape Out (Dout, Hout, Wout) = ({}, {}, {})".format(dout, hout, wout))
@@ -479,16 +489,19 @@ class ModelFeatureMapsOnnx():
 
         conv2_rate_in, conv2_rate_out, conv2_muls, conv2_adds, conv2_mem = self.conv_layer_config(conv2_in_shape, conv2_out_shape, conv2_kernel_shape, conv2_groups, fine2, coarse_in_2, coarse_out_2, s_in=relu_rate_out, s_out=10000)
 
-        sigmoid_rate_in, sigmoid_rate_out, sigmoid_dsps, _, _ = self.sigmoid_layer_config(s_in=conv2_rate_out)
+        sigmoid_rate_in, sigmoid_rate_out, sigmoid_muls, _, _ = self.sigmoid_layer_config(s_in=conv2_rate_out)
         
-        elemwise_mul_rate_in, elemwise_mul_rate_out, elemwise_mul_rate_dsps, _, _ = self.mul_layer_config(s_in=sigmoid_rate_out)
+        elemwise_mul_rate_in, elemwise_mul_rate_out, elemwise_mul_rate_muls, _, _ = self.mul_layer_config(s_in=min(sigmoid_rate_out, glavpool_rate_in))
 
         rates_graph = np.zeros( shape=(6,7) , dtype=float )
         rates_graph[0,0] = glavpool_rate_in
         rates_graph[0,1] = glavpool_rate_out
         in_module_ratio = rates_graph[0,1] / rates_graph[0,0]
+        if mem_bw_in < rates_graph[0,0]:
+            logging.error("SE OP: Memory bounded on reading input. Expected: {} - Max available: {}".format(rates_graph[0,0], mem_bw_in))
         rates_graph[0,0] = min(rates_graph[0,0], mem_bw_in)
-        rates_graph[0,1] = min(rates_graph[0,1], mem_bw_in * in_module_ratio)
+        rates_graph[0,1] = rates_graph[0,0] * in_module_ratio
+        assert math.isclose(in_module_ratio,rates_graph[0,1] / rates_graph[0,0]), "wrong calculation of ratio"
 
         rates_graph[1,1] = conv1_rate_in
         rates_graph[1,2] = conv1_rate_out
@@ -505,8 +518,12 @@ class ModelFeatureMapsOnnx():
         rates_graph[5,5] = elemwise_mul_rate_in
         rates_graph[5,6] = elemwise_mul_rate_out 
         out_module_ratio = rates_graph[5,6] / rates_graph[5,5]
-        rates_graph[5,5] = min(rates_graph[5,5], mem_bw_out)
-        rates_graph[5,6] = min(rates_graph[5,6], mem_bw_out * out_module_ratio)  
+        if mem_bw_out < rates_graph[5,6]:
+            logging.error("SE OP: Memory bounded on writing output. Expected: {} - Max available: {}".format(rates_graph[5,6], mem_bw_out))
+        rates_graph[5,6] = min(rates_graph[5,6], mem_bw_out)  
+        rates_graph[5,5] = rates_graph[5,6] / out_module_ratio
+
+        assert math.isclose(out_module_ratio, rates_graph[5,6] / rates_graph[5,5]), "wrong calculation of ratio"
 
         # print("SE RATE GRAPH")
         # print(rates_graph)
@@ -517,12 +534,7 @@ class ModelFeatureMapsOnnx():
         rate_in = abs(rates_graph[0,0])
         rate_out = abs(rates_graph[5,6])
 
-        if mem_bw_in < rate_in:
-            logging.error("SE OP: Memory bounded on reading input. Expected: {} - Max available: {}".format(rate_in, mem_bw_in))
-        if mem_bw_out < rate_out:
-            logging.error("SE OP: Memory bounded on writing output. Expected: {} - Max available: {}".format(rate_out, mem_bw_out))
-
-        return rate_in, rate_out, glavpool_muls + conv1_muls + conv2_muls + sigmoid_dsps + elemwise_mul_rate_dsps, conv1_adds + conv2_adds, glavpool_mem + conv1_mem + conv2_mem 
+        return rate_in, rate_out, glavpool_muls + conv1_muls + conv2_muls + sigmoid_muls + elemwise_mul_rate_muls, conv1_adds + conv2_adds, glavpool_mem + conv1_mem + conv2_mem 
 
     def get_layer_from_id(self, layer_id):
         for k in self.layers.keys():
@@ -948,7 +960,6 @@ class ModelFeatureMapsOnnx():
                                                 
                                                 logging.warning("Fold = {}".format(folding_name))
                                                 
-                                                #TODO: The input mem bw on this layer is very important so we add the 9/10 of the total bw as the input bw and only the 1/10 as the output bw. When this layer is combined with others in a bigger partition the input rate of this layer will be driven by the output rate of the previous on the graph.
                                                 rate_in, rate_out, muls, adds, mem = self.se_layer_config(glavpool_in_shape, conv1_in_shape, conv1_out_shape, conv1_kernel_shape, conv1_groups, fine_1, coarse_in_1, coarse_out_1, conv2_in_shape, conv2_out_shape, conv2_kernel_shape, conv2_groups, fine_2, coarse_in_2, coarse_out_2, s_in=(s_in+s_out)*0.95, s_out=(s_in+s_out)*0.05)
   
                                                 #TODO: Added worst possible case for buffering on se module i.e., buffer the whole feature map and all of the channels. Should fix this by checking the depth/latency of the left branch in order to calculate the exact buffering that is gonna needed in each se module.
@@ -1080,7 +1091,7 @@ class ModelFeatureMapsOnnx():
 
         return rate_in, rate_out, muls, adds, mem
 
-    def compose_layers(self, file_name, layers_names, final_name, model_name, calculate_pareto, membw_in, membw_out):
+    def compose_layers(self, file_name, layers_names, final_name, model_name, calculate_pareto, membw_in, membw_out, membw_branch):
         sns.set(rc={'figure.figsize':(15,8)})
         sns.set_style("darkgrid", {"axes.facecolor": ".85"})
         l_configs = {}
@@ -1138,7 +1149,8 @@ class ModelFeatureMapsOnnx():
                                                                     rates_graph[0,1] = r1_rout
                                                                     in_module_ratio = rates_graph[0,1] / rates_graph[0,0]
                                                                     rates_graph[0,0] = min(rates_graph[0,0], membw_in)
-                                                                    rates_graph[0,1] = min(rates_graph[0,1], membw_in * in_module_ratio)
+                                                                    rates_graph[0,1] = rates_graph[0,0] * in_module_ratio
+                                                                    assert math.isclose(in_module_ratio, rates_graph[0,1] / rates_graph[0,0]), "wrong calculation of ratio"
 
                                                                     c1_rin, c1_rout, c1_muls, c1_adds, c1_mem = self.get_rates(keys[1], l_configs[keys[1]][c1][1], rates_graph[0,1], 10000)
                                                                     rates_graph[1,1] = c1_rin
@@ -1176,7 +1188,8 @@ class ModelFeatureMapsOnnx():
                                                                     rates_graph[9,9] = b3_rin
                                                                     rates_graph[9,10] = b3_rout
 
-                                                                    c4_rin, c4_rout, c4_muls, c4_adds, c4_mem = self.get_rates(keys[10], l_configs[keys[10]][c4][1], rates_graph[9,10], 10000)
+                                                                    # c4_rin, c4_rout, c4_muls, c4_adds, c4_mem = self.get_rates(keys[10], l_configs[keys[10]][c4][1], rates_graph[9,10], 10000)
+                                                                    c4_rin, c4_rout, c4_muls, c4_adds, c4_mem = self.get_rates(keys[10], l_configs[keys[10]][c4][1], membw_branch, 10000)
                                                                     rates_graph[10,10] = c4_rin
                                                                     rates_graph[10,11] = c4_rout
 
@@ -1184,12 +1197,15 @@ class ModelFeatureMapsOnnx():
                                                                     rates_graph[11,11] = b4_rin
                                                                     rates_graph[11,12] = b4_rout
 
-                                                                    a1_rin, a1_rout, a1_muls, a1_adds, a1_mem = self.get_rates(keys[12], l_configs[keys[12]][a1][1], rates_graph[11,12], 10000)
+                                                                    # a1_rin, a1_rout, a1_muls, a1_adds, a1_mem = self.get_rates(keys[12], l_configs[keys[12]][a1][1], rates_graph[11,12], 10000)
+                                                                    a1_rin, a1_rout, a1_muls, a1_adds, a1_mem = self.get_rates(keys[12], l_configs[keys[12]][a1][1], min(rates_graph[9,10], rates_graph[11,12]), 10000)
                                                                     rates_graph[12,12] = a1_rin
                                                                     rates_graph[12,13] = a1_rout
                                                                     out_module_ratio = rates_graph[12,13] / rates_graph[12,12]
-                                                                    rates_graph[12,12] = min(rates_graph[12,12], membw_out)
-                                                                    rates_graph[12,13] = min(rates_graph[12,13], membw_out * out_module_ratio)
+                                                                    rates_graph[12,13] = min(rates_graph[12,13], membw_out)
+                                                                    rates_graph[12,12] = rates_graph[12,13] / out_module_ratio
+                                                                        
+                                                                    assert math.isclose(out_module_ratio, rates_graph[12,13] / rates_graph[12,12]), "wrong calculation of ratio"
 
                                                                     mem_total = r1_mem + c1_mem + b1_mem + r2_mem + c2_mem + b2_mem + se1_mem + sw1_mem + c3_mem + b3_mem + c4_mem + b4_mem + a1_mem
                                                                     mem_kb = (mem_total*self.wb)/1e3
@@ -1237,7 +1253,8 @@ class ModelFeatureMapsOnnx():
                                                             rates_graph[0,1] = r1_rout
                                                             in_module_ratio = rates_graph[0,1] / rates_graph[0,0]
                                                             rates_graph[0,0] = min(rates_graph[0,0], membw_in)
-                                                            rates_graph[0,1] = min(rates_graph[0,1], membw_in * in_module_ratio)
+                                                            rates_graph[0,1] = rates_graph[0,0] * in_module_ratio
+                                                            assert math.isclose(in_module_ratio, rates_graph[0,1] / rates_graph[0,0]), "wrong calculation of ratio"
 
                                                             c1_rin, c1_rout, c1_muls, c1_adds, c1_mem = self.get_rates(keys[1], l_configs[keys[1]][c1][1], rates_graph[0,1], 10000)
                                                             rates_graph[1,1] = c1_rin
@@ -1275,12 +1292,14 @@ class ModelFeatureMapsOnnx():
                                                             rates_graph[9,9] = b3_rin
                                                             rates_graph[9,10] = b3_rout
                                                             
-                                                            a1_rin, a1_rout, a1_muls, a1_adds, a1_mem = self.get_rates(keys[10], l_configs[keys[10]][a1][1], rates_graph[9,10], 10000)
+                                                            # a1_rin, a1_rout, a1_muls, a1_adds, a1_mem = self.get_rates(keys[10], l_configs[keys[10]][a1][1], rates_graph[9,10], 10000)
+                                                            a1_rin, a1_rout, a1_muls, a1_adds, a1_mem = self.get_rates(keys[10], l_configs[keys[10]][a1][1], min(rates_graph[9,10], membw_branch), 10000)
                                                             rates_graph[10,10] = a1_rin
                                                             rates_graph[10,11] = a1_rout
                                                             out_module_ratio = rates_graph[10,11] / rates_graph[10,10]
-                                                            rates_graph[10,10] = min(rates_graph[10,10], membw_out)
-                                                            rates_graph[10,11] = min(rates_graph[10,11], membw_out * out_module_ratio)
+                                                            rates_graph[10,11] = min(rates_graph[10,11], membw_out)
+                                                            rates_graph[10,10] = rates_graph[10,11] / out_module_ratio
+                                                            assert math.isclose(out_module_ratio, rates_graph[10,11] / rates_graph[10,10]), "wrong calculation of ratio"
 
                                                             mem_total = r1_mem + c1_mem + b1_mem + r2_mem + c2_mem + b2_mem + se1_mem + sw1_mem + c3_mem + b3_mem + a1_mem
                                                             mem_kb = (mem_total*self.wb)/1e3
@@ -1327,7 +1346,8 @@ class ModelFeatureMapsOnnx():
                                                         rates_graph[0,1] = r1_rout
                                                         in_module_ratio = rates_graph[0,1] / rates_graph[0,0]
                                                         rates_graph[0,0] = min(rates_graph[0,0], membw_in)
-                                                        rates_graph[0,1] = min(rates_graph[0,1], membw_in * in_module_ratio)
+                                                        rates_graph[0,1] = rates_graph[0,0] * in_module_ratio
+                                                        assert math.isclose(in_module_ratio, rates_graph[0,1] / rates_graph[0,0]), "wrong calculation of ratio"
 
                                                         c1_rin, c1_rout, c1_muls, c1_adds, c1_mem = self.get_rates(keys[1], l_configs[keys[1]][c1][1], rates_graph[0,1], 10000)
                                                         rates_graph[1,1] = c1_rin
@@ -1361,12 +1381,14 @@ class ModelFeatureMapsOnnx():
                                                         rates_graph[8,8] = b3_rin
                                                         rates_graph[8,9] = b3_rout
                                                         
-                                                        a1_rin, a1_rout, a1_muls, a1_adds, a1_mem = self.get_rates(keys[9], l_configs[keys[9]][a1][1], rates_graph[8,9], 10000)
+                                                        # a1_rin, a1_rout, a1_muls, a1_adds, a1_mem = self.get_rates(keys[9], l_configs[keys[9]][a1][1], rates_graph[8,9], 10000)
+                                                        a1_rin, a1_rout, a1_muls, a1_adds, a1_mem = self.get_rates(keys[9], l_configs[keys[9]][a1][1], min(rates_graph[8,9], membw_branch), 10000)
                                                         rates_graph[9,9] = a1_rin
                                                         rates_graph[9,10] = a1_rout
                                                         out_module_ratio = rates_graph[9,10] / rates_graph[9,9]
-                                                        rates_graph[9,9] = min(rates_graph[9,9], membw_out)
-                                                        rates_graph[9,10] = min(rates_graph[9,10], membw_out * out_module_ratio)
+                                                        rates_graph[9,10] = min(rates_graph[9,10], membw_out)
+                                                        rates_graph[9,9] = rates_graph[9,10] / out_module_ratio
+                                                        assert math.isclose(out_module_ratio, rates_graph[9,10] / rates_graph[9,9]), "wrong calculation of ratio"
 
                                                         mem_total = r1_mem + c1_mem + b1_mem + r2_mem + c2_mem + b2_mem + sw1_mem + c3_mem + b3_mem + a1_mem
                                                         mem_kb = (mem_total*self.wb)/1e3
@@ -1412,7 +1434,8 @@ class ModelFeatureMapsOnnx():
                                                     rates_graph[0,1] = r1_rout
                                                     in_module_ratio = rates_graph[0,1] / rates_graph[0,0]
                                                     rates_graph[0,0] = min(rates_graph[0,0], membw_in)
-                                                    rates_graph[0,1] = min(rates_graph[0,1], membw_in * in_module_ratio)
+                                                    rates_graph[0,1] = rates_graph[0,0] * in_module_ratio
+                                                    assert math.isclose(in_module_ratio, rates_graph[0,1] / rates_graph[0,0]), "wrong calculation of ratio"
 
                                                     c1_rin, c1_rout, c1_muls, c1_adds, c1_mem = self.get_rates(keys[1], l_configs[keys[1]][c1][1], rates_graph[0,1], 10000)
                                                     rates_graph[1,1] = c1_rin
@@ -1442,8 +1465,9 @@ class ModelFeatureMapsOnnx():
                                                     rates_graph[7,7] = c3_rin
                                                     rates_graph[7,8] = c3_rout
                                                     out_module_ratio = rates_graph[7,8] / rates_graph[7,7]
-                                                    rates_graph[7,7] = min(rates_graph[7,7], membw_out)
-                                                    rates_graph[7,8] = min(rates_graph[7,8], membw_out * out_module_ratio)
+                                                    rates_graph[7,8] = min(rates_graph[7,8], membw_out)
+                                                    rates_graph[7,7] = rates_graph[7,8] / out_module_ratio
+                                                    assert math.isclose(out_module_ratio, rates_graph[7,8] / rates_graph[7,7]), "wrong calculation of ratio"
 
                                                     mem_total = r1_mem + c1_mem + b1_mem + r2_mem + c2_mem + b2_mem + sw1_mem + c3_mem
                                                     mem_kb = (mem_total*self.wb)/1e3
@@ -1637,6 +1661,7 @@ def performance_graphs(file_name="x3d_m", layers_to_plot=None, calculate_pareto=
                 mem_bw_in.append(float(row[cols['Memory Bandwidth In(GBs/sec)']]))
                 mem_bw_out.append(float(row[cols['Memory Bandwidth Out(GBs/sec)']]))
                 throughput.append(float(row[cols['Throughtput(outputs/sec)']]))
+                # throughput.append(float(row[cols['Throughtput(words/cycle)']]))
             else:
                 plot_graph(throughput, [dsp_util], folding, prev_layer, 'DSPS', file_name, calculate_pareto=calculate_pareto)
                 plot_graph(throughput, [mem_bw_in, mem_bw_out], folding, prev_layer, 'Memory Bandwidth', file_name, calculate_pareto=calculate_pareto)
@@ -1652,6 +1677,7 @@ def performance_graphs(file_name="x3d_m", layers_to_plot=None, calculate_pareto=
                 mem_bw_in.append(float(row[cols['Memory Bandwidth In(GBs/sec)']]))
                 mem_bw_out.append(float(row[cols['Memory Bandwidth Out(GBs/sec)']]))
                 throughput.append(float(row[cols['Throughtput(outputs/sec)']]))
+                # throughput.append(float(row[cols['Throughtput(words/cycle)']]))
 
             prev_layer = row[cols['Layer']]
 
@@ -1797,8 +1823,8 @@ def main():
     onnx_modeling.create_modules()
 
     fname = args.model_name + '_onnx'
-    onnx_modeling.create_design_points(file_name=fname, s_in=onnx_modeling.max_words_per_cycle*0.5, s_out=onnx_modeling.max_words_per_cycle*0.5)
-    #TODO: Additionaly to saving the per module results as regards the different configurations save the configurations themselves to use them and create on the fly the results during the layer creation on creating bigger layers.
+    #TODO: Different mem bandwidth percentages will give different design points. This should be a parameter as well.
+    onnx_modeling.create_design_points(file_name=fname, s_in=onnx_modeling.max_words_per_cycle*0.35, s_out=onnx_modeling.max_words_per_cycle*0.65)
     # onnx_modeling.create_design_points(file_name=fname, s_in=10000, s_out=10000)
 
     drop_duplicates(file_name=fname, pareto=False)
@@ -1820,9 +1846,8 @@ def main():
     #         pass
 
     for n, l in enumerate(partition_layers):
-        # if len(l) < 13:
-            print("Evaluating Layer {}/{}".format(n+1, len(partition_layers)))
-            onnx_modeling.compose_layers(fname_pareto, l, n+1, fname, args.calculate_pareto, onnx_modeling.max_words_per_cycle*0.5, onnx_modeling.max_words_per_cycle*0.5)
+        print("Evaluating Layer {}/{}".format(n+1, len(partition_layers)))
+        onnx_modeling.compose_layers(fname_pareto, l, n+1, fname, args.calculate_pareto, onnx_modeling.max_words_per_cycle*0.25, onnx_modeling.max_words_per_cycle*0.65, onnx_modeling.max_words_per_cycle*0.1)
 
     # performance_graphs(file_name=fname, layers_to_plot=['Conv', 'Se', 'GlobalAveragePool'], calculate_pareto=args.calculate_pareto)
 
