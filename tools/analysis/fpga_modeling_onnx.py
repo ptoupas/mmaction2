@@ -361,7 +361,7 @@ class ModelFeatureMapsOnnx():
         kh = kernel_shape[3]
         kw = kernel_shape[4]
 
-        cin = kernel_shape[1] * groups
+        cin = kernel_shape[1]
         cout = kernel_shape[0]
 
         muls_unrl = kd * kh * kw * fine
@@ -372,13 +372,9 @@ class ModelFeatureMapsOnnx():
         if cout == groups:
             depthwise = True
 
-        if not depthwise:
-            rates_graph = np.zeros( shape=(4,5) , dtype=float )
-        else:
-            rates_graph = np.zeros( shape=(3,4) , dtype=float )
+        rates_graph = np.zeros( shape=(4,5) , dtype=float )
 
         # The convolution operation is a Layer and is composed of the following modules: Sliding window, Conv, Accumulator 
-
         # Rates for the SW module
         if kd == 1 and kh == 1 and kw == 1:
             rin_sw = 1
@@ -388,10 +384,6 @@ class ModelFeatureMapsOnnx():
             rout_sw = (dout*hout*wout)/(din*hin*win)
         rates_graph[0,0] = rin_sw * coarse_in
         rates_graph[0,1] = rout_sw * (kd * kh * kw) * coarse_in
-        in_module_ratio = rates_graph[0,1] / rates_graph[0,0]
-        rates_graph[0,0] = min(rates_graph[0,0], mem_bw_in)
-        rates_graph[0,1] = rates_graph[0,0] * in_module_ratio
-        assert math.isclose(in_module_ratio, rates_graph[0,1] / rates_graph[0,0]), "wrong calculation of ratio"
 
         rates_graph[1,1] = 1 * rates_graph[0,1]
         rates_graph[1,2] = 1 * rates_graph[0,1] #* coarse_out
@@ -403,64 +395,36 @@ class ModelFeatureMapsOnnx():
         rates_graph[2,2] = rin_conv
         rates_graph[2,3] = rout_conv / (kd * kh * kw)
         
-        if not depthwise:
-            # Rates for the Accumulator module
-            rin_accum = 1 * rates_graph[2,3]
-            rout_accum = (1 * rates_graph[2,3])/cin
-            rates_graph[3,3] = rin_accum
-            rates_graph[3,4] = rout_accum
+        # Rates for the Accumulator module
+        rin_accum = 1 * rates_graph[2,3]
+        rout_accum = (1 * rates_graph[2,3])/cin
+        rates_graph[3,3] = rin_accum
+        rates_graph[3,4] = rout_accum
+
+        # print("CONV RATE GRAPH")
+        # print(rates_graph)
+        # print("-"*50)
+        rates_graph = self.balance_module_rates(rates_graph)
+        # print(rates_graph)
+        # print("=="*50)
+
+        # #TODO: IF mem_bw_in > rates_graph[0,0] then we need to buffer the incoming values to keep up with the processing OR reduce the mem_bw_in rate to match our needs.
+        # #TODO: IF mem_bw_in < rates_graph[0,0] then we need to stall the processing in order to wait for next data to arrive. We need to use less resources or fold even more to match the mem_bw_in rate.
+        if mem_bw_in < rates_graph[0,0]:
+            in_module_ratio = rates_graph[0,1] / rates_graph[0,0]
+            rates_graph[0,0] = mem_bw_in
+            rates_graph[0,1] = rates_graph[0,0] * in_module_ratio
+            assert math.isclose(in_module_ratio, rates_graph[0,1] / rates_graph[0,0]), "wrong calculation of ratio" 
+            rates_graph = self.balance_module_rates(rates_graph)
+        if mem_bw_out < rates_graph[3,4]:
             out_module_ratio = rates_graph[3,4] / rates_graph[3,3]
-            rates_graph[3,4] = min(rates_graph[3,4], mem_bw_out)
+            rates_graph[3,4] = mem_bw_out
             rates_graph[3,3] = rates_graph[3,4] / out_module_ratio
             assert math.isclose(out_module_ratio, rates_graph[3,4] / rates_graph[3,3]), "wrong calculation of ratio"
-            # print("CONV RATE GRAPH")
-            # print(rates_graph)
-            # print("-"*50)
-            rates_graph = self.balance_module_rates(rates_graph)
-            # print(rates_graph)
-            # print("=="*50)
-            rate_in = abs(rates_graph[0,0])
-            rate_out = abs(rates_graph[3,4])
-        else:
-            out_module_ratio = rates_graph[2,3] / rates_graph[2,2]
-            rates_graph[2,3] = min(rates_graph[2,3], mem_bw_out)
-            rates_graph[2,2] = rates_graph[2,3] / out_module_ratio
-            assert math.isclose(out_module_ratio, rates_graph[2,3] / rates_graph[2,2]), "wrong calculation of ratio"
-            # print("CONV RATE GRAPH (DW)")
-            # print(rates_graph)
-            # print("-"*50)
-            rates_graph = self.balance_module_rates(rates_graph)
-            # print(rates_graph)
-            # print("=="*50)
-            rate_in = abs(rates_graph[0,0])
-            rate_out = abs(rates_graph[2,3])
+            rates_graph = self.balance_module_rates(rates_graph)          
 
-        # if not depthwise:
-        #     out_in_ratio = (dout*hout*wout)/(din*hin*win)
-        #     rate_in_tst = 1/cout * out_in_ratio * coarse_in * coarse_out * fine 
-        #     rate_out_tst = 1/cin * out_in_ratio * coarse_in * coarse_out * fine
-        # else:
-        #     out_in_ratio = (dout*hout*wout)/(din*hin*win)
-        #     rate_in_tst = 1/cout * out_in_ratio * coarse_in * coarse_out * fine 
-        #     rate_out_tst = 1 * out_in_ratio * coarse_in * coarse_out * fine
-
-        # out_module_ratio = rate_out_tst/rate_in_tst
-        # if mem_bw_in < rate_in_tst:
-        #     logging.error("CONV OP: Memory bounded on reading input. Expected: {} - Max available: {}".format(rate_in_tst, mem_bw_in))
-        # rate_in_tst = min(rate_in_tst, mem_bw_in)
-        # rate_out_tst_new = rate_in_tst * out_module_ratio
-        # if mem_bw_out < rate_out_tst_new:
-        #     logging.error("CONV OP: Memory bounded on writing output. Expected: {} - Max available: {}".format(rate_out_tst, mem_bw_out))
-        # rate_out_tst = min(rate_out_tst_new, mem_bw_out)
-        # rate_in_tst = rate_out_tst / out_module_ratio
-        # assert math.isclose(out_module_ratio, rate_out_tst/rate_in_tst), "wrong calculation of ratio"
-        # print("Shape In (Din, Hin, Win) = ({}, {}, {})".format(din, hin, win))
-        # print("Shape Out (Dout, Hout, Wout) = ({}, {}, {})".format(dout, hout, wout))
-        # print("Rate in old = {:.5f}. Rate out old = {:.5f}.".format(rate_in, rate_out))
-        # print("Rate in new = {:.5f}. Rate out new = {:.5f}.".format(rate_in_tst, rate_out_tst))
-
-        # rate_in = rate_in_tst
-        # rate_out = rate_out_tst
+        rate_in = abs(rates_graph[0,0])
+        rate_out = abs(rates_graph[3,4])
 
         if kd == 1 and kh == 1 and kw == 1:
             pb = 1
@@ -484,31 +448,40 @@ class ModelFeatureMapsOnnx():
         adds = math.ceil(adds_unrl_1 * coarse_in * coarse_out) + math.ceil(adds_unrl_2 * coarse_in * coarse_out)
         return rate_in, rate_out, muls, adds, mem, depth
 
-    def se_layer_config(self, glavpool_in_shape, conv1_in_shape, conv1_out_shape, conv1_kernel_shape, conv1_padding, conv1_groups, fine1, coarse_in_1, coarse_out_1, conv2_in_shape, conv2_out_shape, conv2_kernel_shape, conv2_padding, conv2_groups, fine2, coarse_in_2, coarse_out_2, s_in=1, s_out=1, se_on_bram=True):
+    def se_layer_config(self, glavpool_in_shape, conv1_in_shape, conv1_out_shape, conv1_kernel_shape, conv1_padding, conv1_groups, fine1, coarse_in_1, coarse_out_1, conv2_in_shape, conv2_out_shape, conv2_kernel_shape, conv2_padding, conv2_groups, fine2, coarse_in_2, coarse_out_2, s_in=1, s_out=1, s_branch=1, se_on_bram=1):
         
         mem_bw_in = s_in
-        mem_bw_out = s_out/2
-        mem_bw_branch = s_out/2
+        mem_bw_out = s_out
+        mem_bw_branch = s_branch
 
         glavpool_rate_in, glavpool_rate_out, glavpool_muls, glavpool_adds, glavpool_mem, glavpool_depth = self.gap_layer_config(glavpool_in_shape, s_in=mem_bw_in, s_out=10000)
+        glavpool_thr_in = (self.cycles_per_sec*glavpool_rate_in)/int(np.prod(np.array(glavpool_in_shape[1:])))
+        glavpool_thr_out = (self.cycles_per_sec*glavpool_rate_out)/int(glavpool_in_shape[1])
+        assert math.isclose(glavpool_thr_in, glavpool_thr_out), "Input and Output Throughputs doesnt match on glavpool. Aborting..."
 
         conv1_rate_in, conv1_rate_out, conv1_muls, conv1_adds, conv1_mem, conv1_depth = self.conv_layer_config(conv1_in_shape, conv1_out_shape, conv1_kernel_shape, conv1_padding, conv1_groups, fine1, coarse_in_1, coarse_out_1, s_in=glavpool_rate_out, s_out=10000)
+        conv1_thr_in = (self.cycles_per_sec*conv1_rate_in)/int(np.prod(np.array(conv1_in_shape[1:])))
+        conv1_thr_out = (self.cycles_per_sec*conv1_rate_out)/int(np.prod(np.array(conv1_out_shape[1:])))
+        assert math.isclose(conv1_thr_in, conv1_thr_out), "Input and Output Throughputs doesnt match on conv1. Aborting..."
 
         relu_rate_in, relu_rate_out, _, _, _ = self.relu_layer_config(s_in=conv1_rate_out)
 
         conv2_rate_in, conv2_rate_out, conv2_muls, conv2_adds, conv2_mem, conv2_depth = self.conv_layer_config(conv2_in_shape, conv2_out_shape, conv2_kernel_shape, conv2_padding, conv2_groups, fine2, coarse_in_2, coarse_out_2, s_in=relu_rate_out, s_out=10000)
+        conv2_thr_in = (self.cycles_per_sec*conv2_rate_in)/int(np.prod(np.array(conv2_in_shape[1:])))
+        conv2_thr_out = (self.cycles_per_sec*conv2_rate_out)/int(np.prod(np.array(conv2_out_shape[1:])))
+        assert math.isclose(conv2_thr_in, conv2_thr_out), "Input and Output Throughputs doesnt match on conv2. Aborting..."
 
         sigmoid_rate_in, sigmoid_rate_out, sigmoid_muls, _, _ = self.sigmoid_layer_config(s_in=conv2_rate_out)
         
         rates_graph = np.zeros( shape=(5,6) , dtype=float )
         rates_graph[0,0] = glavpool_rate_in
         rates_graph[0,1] = glavpool_rate_out
-        in_module_ratio = rates_graph[0,1] / rates_graph[0,0]
-        if mem_bw_in < rates_graph[0,0]:
-            logging.error("SE OP: Memory bounded on reading input. Expected: {} - Max available: {}".format(rates_graph[0,0], mem_bw_in))
-        rates_graph[0,0] = min(rates_graph[0,0], mem_bw_in)
-        rates_graph[0,1] = rates_graph[0,0] * in_module_ratio
-        assert math.isclose(in_module_ratio,rates_graph[0,1] / rates_graph[0,0]), "wrong calculation of ratio"
+        # in_module_ratio = rates_graph[0,1] / rates_graph[0,0]
+        # if mem_bw_in < rates_graph[0,0]:
+        #     logging.error("SE OP: Memory bounded on reading input. Expected: {} - Max available: {}".format(rates_graph[0,0], mem_bw_in))
+        # rates_graph[0,0] = min(rates_graph[0,0], mem_bw_in)
+        # rates_graph[0,1] = rates_graph[0,0] * in_module_ratio
+        # assert math.isclose(in_module_ratio,rates_graph[0,1] / rates_graph[0,0]), "wrong calculation of ratio"
 
         rates_graph[1,1] = conv1_rate_in
         rates_graph[1,2] = conv1_rate_out
@@ -529,7 +502,6 @@ class ModelFeatureMapsOnnx():
         #     logging.error("SE OP: Memory bounded on writing output. Expected: {} - Max available: {}".format(rates_graph[5,6], mem_bw_out))
         # rates_graph[5,6] = min(rates_graph[5,6], mem_bw_out)  
         # rates_graph[5,5] = rates_graph[5,6] / out_module_ratio
-
         # assert math.isclose(out_module_ratio, rates_graph[5,6] / rates_graph[5,5]), "wrong calculation of ratio"
 
         # print("SE RATE GRAPH")
@@ -538,16 +510,38 @@ class ModelFeatureMapsOnnx():
         rates_graph = self.balance_module_rates(rates_graph)
         # print(rates_graph)
         # print("=="*50)
+
+        if mem_bw_in < rates_graph[0,0]:
+            in_module_ratio = rates_graph[0,1] / rates_graph[0,0]
+            rates_graph[0,0] = mem_bw_in
+            rates_graph[0,1] = rates_graph[0,0] * in_module_ratio
+            assert math.isclose(in_module_ratio, rates_graph[0,1] / rates_graph[0,0]), "wrong calculation of ratio" 
+            rates_graph = self.balance_module_rates(rates_graph) 
+
         rate_in = abs(rates_graph[0,0])
         rate_out = abs(rates_graph[4,5])
+        se_thr_in = (self.cycles_per_sec*rate_in)/int(np.prod(np.array(glavpool_in_shape[1:])))
+        se_thr_out = (self.cycles_per_sec*rate_out)/int(np.prod(np.array(conv2_out_shape[1:])))
+        assert math.isclose(se_thr_in, se_thr_out), "Input and Output Throughputs doesnt match on conv2. Aborting..."
 
-        if se_on_bram:
+        assert math.isclose(min(glavpool_thr_out, conv1_thr_out, conv2_thr_out), se_thr_out), "Invalid Throughput Balancing. Aborting..."
+        left_branch_limit = False
+        if se_on_bram == 1:
             mul_sin = rate_out
         else:
-            mul_sin = min(mem_bw_branch, rate_out)
+            left_branch_throughput = (self.cycles_per_sec*mem_bw_branch)/int(np.prod(np.array(glavpool_in_shape[1:])))
+            right_branch_throughput = se_thr_out
+            if left_branch_throughput < right_branch_throughput:
+                mul_sin = mem_bw_branch
+                left_branch_limit = True
+            else:
+                mul_sin = rate_out
         elemwise_mul_rate_in, elemwise_mul_rate_out, elemwise_mul_rate_muls, _, _ = self.mul_layer_config(s_in=mul_sin)
-
+        
+        if left_branch_limit:
+            rate_in = elemwise_mul_rate_in
         rate_out = elemwise_mul_rate_out
+
         if mem_bw_out < rate_out:
             logging.error("SE OP: Memory bounded on writing output. Expected: {} - Max available: {}".format(rate_out, mem_bw_out))
         rate_out = min(rate_out, mem_bw_out)
@@ -557,9 +551,9 @@ class ModelFeatureMapsOnnx():
         mem = glavpool_mem + conv1_mem + conv2_mem
         depth = glavpool_depth + conv1_depth + 1 + conv2_depth + 1
 
-        if se_on_bram:
+        if se_on_bram == 1:
             mem += depth
-        return rate_in, rate_out, muls, adds, mem, depth
+        return rate_in, rate_out, muls, adds, mem, depth, left_branch_limit
 
     def get_layer_from_id(self, layer_id):
         for k in self.layers.keys():
@@ -817,7 +811,7 @@ class ModelFeatureMapsOnnx():
                 del self.modules[sigmoid_name]
                 del self.modules[mul_name]
 
-    def model_layer(self, layer, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, config=None, inter_size=None, buffering_enabled=False, module_mem_bw_in=-1):
+    def model_layer(self, layer, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, config=None, inter_size=None, buffering_enabled=False, module_mem_bw_in=-1, left_branch_limit=False):
         l_config = config if config is not None else "No configuration available"
         layer = layer
         folding = folding_name
@@ -835,20 +829,22 @@ class ModelFeatureMapsOnnx():
         adds = adds
         dsps = muls
 
+        #TODO: Revise these calculations. Seem to be wrong.
         bw_in_gb = (self.cycles_per_sec*bw_in_w*self.wb)/1e9	
         bw_out_gb = (self.cycles_per_sec*bw_out_w*self.wb)/1e9
 
-        thr_in_mem_bw = (self.cycles_per_sec*module_mem_bw_in)/in_size
         thr_in = (self.cycles_per_sec*thr_w_in)/in_size
         thr_out = (self.cycles_per_sec*thr_w_out)/out_size
-        if inter_size is not None:
-            thr_inter = (self.cycles_per_sec*thr_w_out)/inter_size
+        # thr_out_mem_bw = (self.cycles_per_sec*module_mem_bw_in)/in_size
+        # print(thr_out, thr_out_mem_bw)
+        if inter_size is not None and not left_branch_limit:
+            thr_out = (self.cycles_per_sec*thr_w_out)/inter_size
 
-        if buffering_enabled:
-            thr_out = thr_inter
-        else:
-            if inter_size is not None:
-                thr_out = min(thr_inter, thr_in_mem_bw)
+        # if buffering_enabled:
+        #     thr_out = thr_inter
+        # else:
+        #     if inter_size is not None:
+        #         thr_out = min(thr_inter, thr_out_mem_bw)
 
         thr_go = ((muls + adds)*self.cycles_per_sec)/1e9
         dsps_util = (dsps/self.fpga_dsps)*100
@@ -1015,25 +1011,26 @@ class ModelFeatureMapsOnnx():
                         if kd_2 == 1 and kh_2 == 1 and kw_2 == 1:
                             fine_config_2 = [0.5, 1]
 
-                        mem_bw_config = [((s_in+s_out)*0.25, (s_in+s_out)*0.75), ((s_in+s_out)*0.50, (s_in+s_out)*0.50), ((s_in+s_out)*0.75, (s_in+s_out)*0.25)]
+                        mem_bw = s_in + s_out
+                        mem_bw_config = [(mem_bw*0.3, mem_bw*0.3, mem_bw*0.4), (mem_bw*0.4, mem_bw*0.4, mem_bw*0.2), (mem_bw*0.2, mem_bw*0.2, mem_bw*0.4), (mem_bw*0.2, mem_bw*0.4, mem_bw*0.2), (mem_bw*0.5, mem_bw*0.2, mem_bw*0.3), (mem_bw*0.3, mem_bw*0.2, mem_bw*0.5), (mem_bw*0.2, mem_bw*0.7, mem_bw*0.1), (mem_bw*0.2, mem_bw*0.6, mem_bw*0.2)]
                         for coarse_in_1 in coarse_in_config_conv1:
                             for coarse_in_2 in coarse_in_config_conv2:
                                 for coarse_out_1 in coarse_out_config_conv1:
                                     for coarse_out_2 in coarse_out_config_conv2:
                                         for fine_1 in fine_config_1:
                                             for fine_2 in fine_config_2:
-                                                for se_bw_in, se_bw_out in mem_bw_config:
-                                                    for se_on_bram in [True, False]:
+                                                for se_bw_in, se_bw_out, se_bw_branch in mem_bw_config:
+                                                    for se_on_bram in [0, 1]:
                                                         # if not coarse_out_1 == coarse_in_2:
                                                         #     logging.error("Skipping configuration N_Coarse_1({}/{}) - N_Coarse_2({}/{}) - f_Fine_1({}) - f_Fine_2({}) since N_Coarse_1 out ({}) does not match with N_Coarse_2 in ({}).".format(coarse_in_1, coarse_out_1, coarse_in_2, coarse_out_2, fine_1, fine_2, coarse_out_1, coarse_in_2))
                                                         #     continue
 
-                                                        folding_name = "N_Coarse_1({}/{}) - N_Coarse_2({}/{}) - f_Fine_1({:.2f}) - f_Fine_2({:.2f}) - Mem BW({:.2f}/{:.2f})".format(coarse_in_1, coarse_out_1, coarse_in_2, coarse_out_2, fine_1, fine_2, se_bw_in, se_bw_out)
+                                                        folding_name = "N_Coarse_1({}/{}) - N_Coarse_2({}/{}) - f_Fine_1({:.2f}) - f_Fine_2({:.2f}) - Mem BW({:.2f}/{:.2f}/{:.2f})".format(coarse_in_1, coarse_out_1, coarse_in_2, coarse_out_2, fine_1, fine_2, se_bw_in, se_bw_out, se_bw_branch)
                                                         if se_on_bram:
                                                             folding_name += " - BRAM"
                                                         logging.warning("Fold = {}".format(folding_name))
                                                         
-                                                        rate_in, rate_out, muls, adds, mem, depth = self.se_layer_config(glavpool_in_shape, conv1_in_shape, conv1_out_shape, conv1_kernel_shape, conv1_padding, conv1_groups, fine_1, coarse_in_1, coarse_out_1, conv2_in_shape, conv2_out_shape, conv2_kernel_shape, conv2_padding, conv2_groups, fine_2, coarse_in_2, coarse_out_2, s_in=se_bw_in, s_out=se_bw_out, se_on_bram=se_on_bram)
+                                                        rate_in, rate_out, muls, adds, mem, depth, left_branch_limit = self.se_layer_config(glavpool_in_shape, conv1_in_shape, conv1_out_shape, conv1_kernel_shape, conv1_padding, conv1_groups, fine_1, coarse_in_1, coarse_out_1, conv2_in_shape, conv2_out_shape, conv2_kernel_shape, conv2_padding, conv2_groups, fine_2, coarse_in_2, coarse_out_2, s_in=se_bw_in, s_out=se_bw_out, s_branch=se_bw_branch, se_on_bram=se_on_bram)
         
                                                         #TODO: Added worst possible case for buffering on se module i.e., buffer the whole feature map and all of the channels. Should fix this by checking the depth/latency of the left branch in order to calculate the exact buffering that is gonna needed in each se module.
                                                         #TODO: Another solution is to read again from off-chip memory which will prevent the buffering i.e., reduce the BRAM needs BUT will reduce the mem bw in total as well since we need to first write the results (in a bigger layer-wise partition) and the read them again i.e., will probably need to have mem_bw / 4 instead of mem_bw / 2 in each point that we access the off-chip memory.
@@ -1041,7 +1038,7 @@ class ModelFeatureMapsOnnx():
 
                                                         current_config = [glavpool_in_shape, conv1_in_shape, conv1_out_shape, conv1_kernel_shape, conv1_padding, conv1_groups, fine_1, coarse_in_1, coarse_out_1, conv2_in_shape, conv2_out_shape, conv2_kernel_shape, conv2_padding, conv2_groups, fine_2, coarse_in_2, coarse_out_2, se_on_bram]
 
-                                                        self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, current_config, br_size, se_on_bram, se_bw_in)
+                                                        self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, current_config, br_size, se_on_bram, se_bw_in, left_branch_limit)
 
                     elif operation == 'BatchNormalization':
                         out_shape = self.modules[name]['shape_out']
@@ -1140,35 +1137,51 @@ class ModelFeatureMapsOnnx():
                     
                     # csv_writer.writerow(["-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"])
 
-    def get_rates(self, layer, config, bw_in, bw_out):
+    def get_rates(self, layer, config, bw_in, bw_out, bw_branch):
         operation = layer.split("_")[0]
-
+        tmp_thr_in, tmp_thr_out = 0, 0
         if operation == 'Conv':
             rate_in, rate_out, muls, adds, mem, depth = self.conv_layer_config(config[0], config[1], config[2], config[3], config[4], config[5], config[6], config[7], s_in=bw_in, s_out=bw_out)
+            tmp_thr_in = (self.cycles_per_sec*rate_in)/int(np.prod(np.array(config[0][1:]))/config[4])
+            tmp_thr_out = (self.cycles_per_sec*rate_out)/int(np.prod(np.array(config[1][1:])))
+            # print("{} throughput = {}".format(operation, tmp_thr_out))
+            assert math.isclose(tmp_thr_in, tmp_thr_out), "Input and Output Throughputs doesnt match on CONV operation. Aborting..."
         elif operation == 'Se':
-            rate_in, rate_out, muls, adds, mem, depth = self.se_layer_config(config[0], config[1], config[2], config[3], config[4], config[5], config[6], config[7], config[8], config[9], config[10], config[11], config[12], config[13], config[14], config[15], config[16], s_in=bw_in, s_out=bw_out, se_on_bram=config[17])
+            rate_in, rate_out, muls, adds, mem, depth, left_branch_limit = self.se_layer_config(config[0], config[1], config[2], config[3], config[4], config[5], config[6], config[7], config[8], config[9], config[10], config[11], config[12], config[13], config[14], config[15], config[16], s_in=bw_in, s_out=bw_out, s_branch=bw_branch, se_on_bram=config[17])
+            tmp_thr_in = (self.cycles_per_sec*rate_in)/int(np.prod(np.array(config[0][1:])))
+            tmp_thr_out = (self.cycles_per_sec*rate_out)/int(np.prod(np.array(config[0][1:])))
+            if not left_branch_limit:
+                tmp_thr_out = (self.cycles_per_sec*rate_out)/int(np.prod(np.array(config[10][1:])))
+            # print("{} throughput = {}".format(operation, tmp_thr_out))
+            assert math.isclose(tmp_thr_in, tmp_thr_out), "Input and Output Throughputs doesnt match on SE operation. Aborting..."
         elif operation == 'GlobalAveragePool':
             rate_in, rate_out, muls, adds, mem, depth = self.gap_layer_config(config[0], s_in=bw_in)
         elif operation == 'Relu':
             rate_in, rate_out, muls, adds, mem = self.relu_layer_config(s_in=bw_in)
+            assert math.isclose(rate_in, rate_out), "Input and Output Rates doesnt match on {} operation. Aborting...".format(operation)
             depth = 1
         elif operation == 'BatchNormalization':
             rate_in, rate_out, muls, adds, mem = self.batchnorm_layer_config(config[0], s_in=bw_in)
+            assert math.isclose(rate_in, rate_out), "Input and Output Rates doesnt match on {} operation. Aborting...".format(operation)
             depth = 1
         elif operation == 'Swish':
             rate_in, rate_out, muls, adds, mem = self.swish_layer_config(s_in=bw_in)
+            assert math.isclose(rate_in, rate_out), "Input and Output Rates doesnt match on {} operation. Aborting...".format(operation)
             depth = 1
         elif operation == 'Sigmoid':
             rate_in, rate_out, muls, adds, mem = self.sigmoid_layer_config(s_in=bw_in)
+            assert math.isclose(rate_in, rate_out), "Input and Output Rates doesnt match on {} operation. Aborting...".format(operation)
             depth = 1
         elif operation == 'Add':
             rate_in, rate_out, muls, adds, mem = self.add_layer_config(s_in=bw_in)
+            assert math.isclose(rate_in, rate_out), "Input and Output Rates doesnt match on {} operation. Aborting...".format(operation)
             depth = 1
         elif operation == 'Mul':
             rate_in, rate_out, muls, adds, mem = self.mul_layer_config(s_in=bw_in)
+            assert math.isclose(rate_in, rate_out), "Input and Output Rates doesnt match on {} operation. Aborting...".format(operation)
             depth = 1
 
-        return rate_in, rate_out, muls, adds, mem, depth
+        return rate_in, rate_out, muls, adds, mem, depth, tmp_thr_in, tmp_thr_out
 
     def compose_layers(self, file_name, layers_names, final_name, model_name, calculate_pareto, membw, se_on_bram):
         sns.set(rc={'figure.figsize':(15,8)})
@@ -1227,7 +1240,7 @@ class ModelFeatureMapsOnnx():
                                                                     pbar.update(1)
                                                                     rates_graph = np.zeros( shape=(13,14) , dtype=float )
 
-                                                                    r1_rin, r1_rout, r1_muls, r1_adds, r1_mem, r1_depth = self.get_rates(keys[0], l_configs[keys[0]][r1][1], membw_in, 10000)
+                                                                    r1_rin, r1_rout, r1_muls, r1_adds, r1_mem, r1_depth, _, _ = self.get_rates(keys[0], l_configs[keys[0]][r1][1], membw_in, membw_branch, 10000)
                                                                     rates_graph[0,0] = r1_rin
                                                                     rates_graph[0,1] = r1_rout
                                                                     in_module_ratio = rates_graph[0,1] / rates_graph[0,0]
@@ -1235,56 +1248,56 @@ class ModelFeatureMapsOnnx():
                                                                     rates_graph[0,1] = rates_graph[0,0] * in_module_ratio
                                                                     assert math.isclose(in_module_ratio, rates_graph[0,1] / rates_graph[0,0]), "wrong calculation of ratio"
 
-                                                                    c1_rin, c1_rout, c1_muls, c1_adds, c1_mem, c1_depth = self.get_rates(keys[1], l_configs[keys[1]][c1][1], rates_graph[0,1], 10000)
+                                                                    c1_rin, c1_rout, c1_muls, c1_adds, c1_mem, c1_depth, _, _ = self.get_rates(keys[1], l_configs[keys[1]][c1][1], rates_graph[0,1], membw_branch, 10000)
                                                                     rates_graph[1,1] = c1_rin
                                                                     rates_graph[1,2] = c1_rout
 
-                                                                    b1_rin, b1_rout, b1_muls, b1_adds, b1_mem, b1_depth = self.get_rates(keys[2], l_configs[keys[2]][b1][1], rates_graph[1,2], 10000)
+                                                                    b1_rin, b1_rout, b1_muls, b1_adds, b1_mem, b1_depth, _, _ = self.get_rates(keys[2], l_configs[keys[2]][b1][1], rates_graph[1,2], membw_branch, 10000)
                                                                     rates_graph[2,2] = b1_rin
                                                                     rates_graph[2,3] = b1_rout
 
-                                                                    r2_rin, r2_rout, r2_muls, r2_adds, r2_mem, r2_depth = self.get_rates(keys[3], l_configs[keys[3]][r2][1], rates_graph[2,3], 10000)
+                                                                    r2_rin, r2_rout, r2_muls, r2_adds, r2_mem, r2_depth, _, _ = self.get_rates(keys[3], l_configs[keys[3]][r2][1], rates_graph[2,3], membw_branch, 10000)
                                                                     rates_graph[3,3] = r2_rin
                                                                     rates_graph[3,4] = r2_rout
                                                                     
-                                                                    c2_rin, c2_rout, c2_muls, c2_adds, c2_mem, c2_depth = self.get_rates(keys[4], l_configs[keys[4]][c2][1], rates_graph[3,4], 10000)
+                                                                    c2_rin, c2_rout, c2_muls, c2_adds, c2_mem, c2_depth, _, _ = self.get_rates(keys[4], l_configs[keys[4]][c2][1], rates_graph[3,4], membw_branch, 10000)
                                                                     rates_graph[4,4] = c2_rin
                                                                     rates_graph[4,5] = c2_rout
 
-                                                                    b2_rin, b2_rout, b2_muls, b2_adds, b2_mem, b2_depth = self.get_rates(keys[5], l_configs[keys[5]][b2][1], rates_graph[4,5], 10000)
+                                                                    b2_rin, b2_rout, b2_muls, b2_adds, b2_mem, b2_depth, _, _ = self.get_rates(keys[5], l_configs[keys[5]][b2][1], rates_graph[4,5], membw_branch, 10000)
                                                                     rates_graph[5,5] = b2_rin
                                                                     rates_graph[5,6] = b2_rout
 
                                                                     if se_on_bram:
-                                                                        se1_rin, se1_rout, se1_muls, se1_adds, se1_mem, se1_depth = self.get_rates(keys[6], l_configs[keys[6]][se1][1], rates_graph[5,6], 10000)
+                                                                        se1_rin, se1_rout, se1_muls, se1_adds, se1_mem, se1_depth, _, _ = self.get_rates(keys[6], l_configs[keys[6]][se1][1], rates_graph[5,6], membw_branch, 10000)
                                                                     else:
-                                                                        se1_rin, se1_rout, se1_muls, se1_adds, se1_mem, se1_depth = self.get_rates(keys[6], l_configs[keys[6]][se1][1], rates_graph[5,6], membw_se_wr)
+                                                                        se1_rin, se1_rout, se1_muls, se1_adds, se1_mem, se1_depth, _, _ = self.get_rates(keys[6], l_configs[keys[6]][se1][1], rates_graph[5,6], membw_branch, membw_se_wr)
                                                                     rates_graph[6,6] = se1_rin
                                                                     rates_graph[6,7] = se1_rout
 
-                                                                    sw1_rin, sw1_rout, sw1_muls, sw1_adds, sw1_mem, sw1_depth = self.get_rates(keys[7], l_configs[keys[7]][sw1][1], rates_graph[6,7], 10000)
+                                                                    sw1_rin, sw1_rout, sw1_muls, sw1_adds, sw1_mem, sw1_depth, _, _ = self.get_rates(keys[7], l_configs[keys[7]][sw1][1], rates_graph[6,7], membw_branch, 10000)
                                                                     rates_graph[7,7] = sw1_rin
                                                                     rates_graph[7,8] = sw1_rout
 
-                                                                    c3_rin, c3_rout, c3_muls, c3_adds, c3_mem, c3_depth = self.get_rates(keys[8], l_configs[keys[8]][c3][1], rates_graph[7,8], 10000)
+                                                                    c3_rin, c3_rout, c3_muls, c3_adds, c3_mem, c3_depth, _, _ = self.get_rates(keys[8], l_configs[keys[8]][c3][1], rates_graph[7,8], membw_branch, 10000)
                                                                     rates_graph[8,8] = c3_rin
                                                                     rates_graph[8,9] = c3_rout
 
-                                                                    b3_rin, b3_rout, b3_muls, b3_adds, b3_mem, b3_depth = self.get_rates(keys[9], l_configs[keys[9]][b3][1], rates_graph[8,9], 10000)
+                                                                    b3_rin, b3_rout, b3_muls, b3_adds, b3_mem, b3_depth, _, _ = self.get_rates(keys[9], l_configs[keys[9]][b3][1], rates_graph[8,9], membw_branch, 10000)
                                                                     rates_graph[9,9] = b3_rin
                                                                     rates_graph[9,10] = b3_rout
 
-                                                                    # c4_rin, c4_rout, c4_muls, c4_adds, c4_mem, c4_depth = self.get_rates(keys[10], l_configs[keys[10]][c4][1], rates_graph[9,10], 10000)
-                                                                    c4_rin, c4_rout, c4_muls, c4_adds, c4_mem, c4_depth = self.get_rates(keys[10], l_configs[keys[10]][c4][1], membw_branch, 10000)
+                                                                    # c4_rin, c4_rout, c4_muls, c4_adds, c4_mem, c4_depth, _, _ = self.get_rates(keys[10], l_configs[keys[10]][c4][1], rates_graph[9,10], membw_branch, 10000)
+                                                                    c4_rin, c4_rout, c4_muls, c4_adds, c4_mem, c4_depth, _, _ = self.get_rates(keys[10], l_configs[keys[10]][c4][1], membw_branch, membw_branch, 10000)
                                                                     rates_graph[10,10] = c4_rin
                                                                     rates_graph[10,11] = c4_rout
 
-                                                                    b4_rin, b4_rout, b4_muls, b4_adds, b4_mem, b4_depth = self.get_rates(keys[11], l_configs[keys[11]][b4][1], rates_graph[10,11], 10000)
+                                                                    b4_rin, b4_rout, b4_muls, b4_adds, b4_mem, b4_depth, _, _ = self.get_rates(keys[11], l_configs[keys[11]][b4][1], rates_graph[10,11], membw_branch, 10000)
                                                                     rates_graph[11,11] = b4_rin
                                                                     rates_graph[11,12] = b4_rout
 
-                                                                    # a1_rin, a1_rout, a1_muls, a1_adds, a1_mem, a1_depth = self.get_rates(keys[12], l_configs[keys[12]][a1][1], rates_graph[11,12], 10000)
-                                                                    a1_rin, a1_rout, a1_muls, a1_adds, a1_mem, a1_depth = self.get_rates(keys[12], l_configs[keys[12]][a1][1], min(rates_graph[9,10], rates_graph[11,12]), 10000)
+                                                                    # a1_rin, a1_rout, a1_muls, a1_adds, a1_mem, a1_depth, _, _ = self.get_rates(keys[12], l_configs[keys[12]][a1][1], rates_graph[11,12], membw_branch, 10000)
+                                                                    a1_rin, a1_rout, a1_muls, a1_adds, a1_mem, a1_depth, _, _ = self.get_rates(keys[12], l_configs[keys[12]][a1][1], min(rates_graph[9,10], rates_graph[11,12]), membw_branch, 10000)
                                                                     rates_graph[12,12] = a1_rin
                                                                     rates_graph[12,13] = a1_rout
                                                                     out_module_ratio = rates_graph[12,13] / rates_graph[12,12]
@@ -1318,11 +1331,15 @@ class ModelFeatureMapsOnnx():
                                                                     thr_in = (self.cycles_per_sec*rate_in)/in_size
                                                                     thr_out = (self.cycles_per_sec*rate_out)/out_size
 
+                                                                    assert math.isclose(thr_out, thr_in), "Input and Output Throughput doesnt match. Aborting..."
+
                                                                     if bram_total < 90.0:
                                                                         dsp_config.append(dsps_total)
                                                                         bram_config.append(bram_total)
                                                                         throughput_config.append(thr_out)
         elif len(sizes) == 11:
+            # membw_in, membw_out, membw_branch, membw_se_wr, membw_se_read = membw * 0.2, membw * 0.2, membw * 0.2, membw * 0.2, membw * 0.2
+            membw_config = [(membw*0.2, membw*0.2, membw*0.2, membw*0.2, membw*0.2), (membw*0.4, membw*0.3, membw*0.1, membw*0.1, membw*0.1), (membw*0.1, membw*0.2, membw*0.3, membw*0.1, membw*0.3), (membw*0.5, membw*0.2, membw*0.1, membw*0.1, membw*0.1), (membw*0.1, membw*0.5, membw*0.2, membw*0.1, membw*0.1)]
             with tqdm(total=int(np.prod(np.array(sizes)))) as pbar:
                 for r1 in tqdm(range(sizes[0]), leave=False):
                     for c1 in tqdm(range(sizes[1]), leave=False):
@@ -1335,96 +1352,124 @@ class ModelFeatureMapsOnnx():
                                                 for c3 in tqdm(range(sizes[8]), leave=False):
                                                     for b3 in tqdm(range(sizes[9]), leave=False):
                                                         for a1 in tqdm(range(sizes[10]), leave=False):
-                                                            pbar.update(1)
-                                                            rates_graph = np.zeros( shape=(11,12) , dtype=float )
+                                                            for membw_in, membw_out, membw_branch, membw_se_wr, membw_se_read in tqdm(membw_config, leave=False):
+                                                                pbar.update(1)
+                                                                rates_graph = np.zeros( shape=(11,12) , dtype=float )
 
-                                                            r1_rin, r1_rout, r1_muls, r1_adds, r1_mem, r1_depth = self.get_rates(keys[0], l_configs[keys[0]][r1][1], membw_in, 10000)
-                                                            rates_graph[0,0] = r1_rin
-                                                            rates_graph[0,1] = r1_rout
-                                                            in_module_ratio = rates_graph[0,1] / rates_graph[0,0]
-                                                            rates_graph[0,0] = min(rates_graph[0,0], membw_in)
-                                                            rates_graph[0,1] = rates_graph[0,0] * in_module_ratio
-                                                            assert math.isclose(in_module_ratio, rates_graph[0,1] / rates_graph[0,0]), "wrong calculation of ratio"
+                                                                r1_rin, r1_rout, r1_muls, r1_adds, r1_mem, r1_depth, _, _ = self.get_rates(keys[0], l_configs[keys[0]][r1][1], membw_in, membw_branch, 10000)
+                                                                rates_graph[0,0] = r1_rin
+                                                                rates_graph[0,1] = r1_rout
+                                                                in_module_ratio = rates_graph[0,1] / rates_graph[0,0]
+                                                                rates_graph[0,0] = min(rates_graph[0,0], membw_in)
+                                                                rates_graph[0,1] = rates_graph[0,0] * in_module_ratio
+                                                                assert math.isclose(in_module_ratio, rates_graph[0,1] / rates_graph[0,0]), "wrong calculation of ratio"
 
-                                                            c1_rin, c1_rout, c1_muls, c1_adds, c1_mem, c1_depth = self.get_rates(keys[1], l_configs[keys[1]][c1][1], rates_graph[0,1], 10000)
-                                                            rates_graph[1,1] = c1_rin
-                                                            rates_graph[1,2] = c1_rout
+                                                                c1_rin, c1_rout, c1_muls, c1_adds, c1_mem, c1_depth, c1_thr_in, c1_thr_out = self.get_rates(keys[1], l_configs[keys[1]][c1][1], rates_graph[0,1], membw_branch, 10000)
+                                                                rates_graph[1,1] = c1_rin
+                                                                rates_graph[1,2] = c1_rout
 
-                                                            b1_rin, b1_rout, b1_muls, b1_adds, b1_mem, b1_depth = self.get_rates(keys[2], l_configs[keys[2]][b1][1], rates_graph[1,2], 10000)
-                                                            rates_graph[2,2] = b1_rin
-                                                            rates_graph[2,3] = b1_rout
+                                                                b1_rin, b1_rout, b1_muls, b1_adds, b1_mem, b1_depth, _, _ = self.get_rates(keys[2], l_configs[keys[2]][b1][1], rates_graph[1,2], membw_branch, 10000)
+                                                                rates_graph[2,2] = b1_rin
+                                                                rates_graph[2,3] = b1_rout
 
-                                                            r2_rin, r2_rout, r2_muls, r2_adds, r2_mem, r2_depth = self.get_rates(keys[3], l_configs[keys[3]][r2][1], rates_graph[2,3], 10000)
-                                                            rates_graph[3,3] = r2_rin
-                                                            rates_graph[3,4] = r2_rout
-                                                            
-                                                            c2_rin, c2_rout, c2_muls, c2_adds, c2_mem, c2_depth = self.get_rates(keys[4], l_configs[keys[4]][c2][1], rates_graph[3,4], 10000)
-                                                            rates_graph[4,4] = c2_rin
-                                                            rates_graph[4,5] = c2_rout
+                                                                r2_rin, r2_rout, r2_muls, r2_adds, r2_mem, r2_depth, _, _ = self.get_rates(keys[3], l_configs[keys[3]][r2][1], rates_graph[2,3], membw_branch, 10000)
+                                                                rates_graph[3,3] = r2_rin
+                                                                rates_graph[3,4] = r2_rout
+                                                                
+                                                                c2_rin, c2_rout, c2_muls, c2_adds, c2_mem, c2_depth, c2_thr_in, c2_thr_out = self.get_rates(keys[4], l_configs[keys[4]][c2][1], rates_graph[3,4], membw_branch, 10000)
+                                                                rates_graph[4,4] = c2_rin
+                                                                rates_graph[4,5] = c2_rout
 
-                                                            b2_rin, b2_rout, b2_muls, b2_adds, b2_mem, b2_depth = self.get_rates(keys[5], l_configs[keys[5]][b2][1], rates_graph[4,5], 10000)
-                                                            rates_graph[5,5] = b2_rin
-                                                            rates_graph[5,6] = b2_rout
+                                                                b2_rin, b2_rout, b2_muls, b2_adds, b2_mem, b2_depth, _, _ = self.get_rates(keys[5], l_configs[keys[5]][b2][1], rates_graph[4,5], membw_branch, 10000)
+                                                                rates_graph[5,5] = b2_rin
+                                                                rates_graph[5,6] = b2_rout
 
-                                                            if se_on_bram:
-                                                                se1_rin, se1_rout, se1_muls, se1_adds, se1_mem, se1_depth = self.get_rates(keys[6], l_configs[keys[6]][se1][1], rates_graph[5,6], 10000)
-                                                            else:
-                                                                se1_rin, se1_rout, se1_muls, se1_adds, se1_mem, se1_depth = self.get_rates(keys[6], l_configs[keys[6]][se1][1], rates_graph[5,6], membw_se_wr)
-                                                            rates_graph[6,6] = se1_rin
-                                                            rates_graph[6,7] = se1_rout
+                                                                if se_on_bram:
+                                                                    se1_rin, se1_rout, se1_muls, se1_adds, se1_mem, se1_depth, se1_thr_in, se1_thr_out = self.get_rates(keys[6], l_configs[keys[6]][se1][1], rates_graph[5,6], membw_branch, 10000)
+                                                                else:
+                                                                    se1_rin, se1_rout, se1_muls, se1_adds, se1_mem, se1_depth, se1_thr_in, se1_thr_out = self.get_rates(keys[6], l_configs[keys[6]][se1][1], rates_graph[5,6], membw_branch, membw_se_wr)
+                                                                rates_graph[6,6] = se1_rin
+                                                                rates_graph[6,7] = se1_rout
 
-                                                            sw1_rin, sw1_rout, sw1_muls, sw1_adds, sw1_mem, sw1_depth = self.get_rates(keys[7], l_configs[keys[7]][sw1][1], rates_graph[6,7], 10000)
-                                                            rates_graph[7,7] = sw1_rin
-                                                            rates_graph[7,8] = sw1_rout
+                                                                sw1_rin, sw1_rout, sw1_muls, sw1_adds, sw1_mem, sw1_depth, _, _ = self.get_rates(keys[7], l_configs[keys[7]][sw1][1], rates_graph[6,7], membw_branch, 10000)
+                                                                rates_graph[7,7] = sw1_rin
+                                                                rates_graph[7,8] = sw1_rout
 
-                                                            c3_rin, c3_rout, c3_muls, c3_adds, c3_mem, c3_depth = self.get_rates(keys[8], l_configs[keys[8]][c3][1], rates_graph[7,8], 10000)
-                                                            rates_graph[8,8] = c3_rin
-                                                            rates_graph[8,9] = c3_rout
+                                                                c3_rin, c3_rout, c3_muls, c3_adds, c3_mem, c3_depth, c3_thr_in, c3_thr_out = self.get_rates(keys[8], l_configs[keys[8]][c3][1], rates_graph[7,8], membw_branch, 10000)
+                                                                rates_graph[8,8] = c3_rin
+                                                                rates_graph[8,9] = c3_rout
 
-                                                            b3_rin, b3_rout, b3_muls, b3_adds, b3_mem, b3_depth = self.get_rates(keys[9], l_configs[keys[9]][b3][1], rates_graph[8,9], 10000)
-                                                            rates_graph[9,9] = b3_rin
-                                                            rates_graph[9,10] = b3_rout
-                                                            
-                                                            # a1_rin, a1_rout, a1_muls, a1_adds, a1_mem, a1_depth = self.get_rates(keys[10], l_configs[keys[10]][a1][1], rates_graph[9,10], 10000)
-                                                            a1_rin, a1_rout, a1_muls, a1_adds, a1_mem, a1_depth = self.get_rates(keys[10], l_configs[keys[10]][a1][1], min(rates_graph[9,10], membw_branch), 10000)
-                                                            rates_graph[10,10] = a1_rin
-                                                            rates_graph[10,11] = a1_rout
-                                                            out_module_ratio = rates_graph[10,11] / rates_graph[10,10]
-                                                            rates_graph[10,11] = min(rates_graph[10,11], membw_out)
-                                                            rates_graph[10,10] = rates_graph[10,11] / out_module_ratio
-                                                            assert math.isclose(out_module_ratio, rates_graph[10,11] / rates_graph[10,10]), "wrong calculation of ratio"
+                                                                b3_rin, b3_rout, b3_muls, b3_adds, b3_mem, b3_depth, _, _ = self.get_rates(keys[9], l_configs[keys[9]][b3][1], rates_graph[8,9], membw_branch, 10000)
+                                                                rates_graph[9,9] = b3_rin
+                                                                rates_graph[9,10] = b3_rout
+                                                                
+                                                                # a1_rin, a1_rout, a1_muls, a1_adds, a1_mem, a1_depth, _, _ = self.get_rates(keys[10], l_configs[keys[10]][a1][1], rates_graph[9,10], membw_branch, 10000)
+                                                                # a1_rin, a1_rout, a1_muls, a1_adds, a1_mem, a1_depth, _, _ = self.get_rates(keys[10], l_configs[keys[10]][a1][1], min(rates_graph[9,10], membw_branch), membw_branch, 10000)
+                                                                # rates_graph[10,10] = a1_rin
+                                                                # rates_graph[10,11] = a1_rout
+                                                                # out_module_ratio = rates_graph[10,11] / rates_graph[10,10]
+                                                                # rates_graph[10,11] = min(rates_graph[10,11], membw_out)
+                                                                # rates_graph[10,10] = rates_graph[10,11] / out_module_ratio
+                                                                # assert math.isclose(out_module_ratio, rates_graph[10,11] / rates_graph[10,10]), "wrong calculation of ratio"
 
-                                                            mem_total = r1_mem + c1_mem + b1_mem + r2_mem + c2_mem + b2_mem + se1_mem + sw1_mem + c3_mem + b3_mem + a1_mem
-                                                            if se_on_bram:
-                                                                mem_branch = min(se1_depth / b2_rout, np.prod(np.array(l_configs[keys[6]][se1][1][0])))
-                                                                mem_total += mem_branch
-                                                            mem_kb = (mem_total*self.wb)/1e3
-                                                            bram_total = math.ceil(mem_kb/(self.bram_mem/8))
-                                                            bram_total = (bram_total/self.fpga_bram)*100
+                                                                rates_graph_balanced = np.copy(rates_graph)
+                                                                rates_graph_balanced = self.balance_module_rates(rates_graph_balanced)
 
-                                                            dsps_total = r1_muls + c1_muls + b1_muls + r2_muls + c2_muls + b2_muls + se1_muls + sw1_muls + c3_muls + b3_muls + a1_muls
-                                                            dsps_total = (dsps_total/self.fpga_dsps)*100
+                                                                if membw_in < rates_graph_balanced[0,0]:
+                                                                    in_module_ratio = rates_graph_balanced[0,1] / rates_graph_balanced[0,0]
+                                                                    rates_graph_balanced[0,0] = membw_in
+                                                                    rates_graph_balanced[0,1] = rates_graph_balanced[0,0] * in_module_ratio
+                                                                    assert math.isclose(in_module_ratio, rates_graph_balanced[0,1] / rates_graph_balanced[0,0]), "wrong calculation of ratio" 
+                                                                    rates_graph_balanced = self.balance_module_rates(rates_graph_balanced) 
 
-                                                            rates_graph_balanced = np.copy(rates_graph)
-                                                            rates_graph_balanced = self.balance_module_rates(rates_graph_balanced)
+                                                                rate_in = abs(rates_graph_balanced[0,0])
+                                                                rate_out = abs(rates_graph_balanced[9,10])
 
-                                                            rate_in = abs(rates_graph_balanced[0,0])
-                                                            rate_out = abs(rates_graph_balanced[10,11])
-                                                            
-                                                            in_shape = self.modules[keys[0]]['shape_in']
-                                                            in_size = int(np.prod(np.array(in_shape[1:])))
-                                                            out_shape = self.modules[keys[10]]['shape_out']
-                                                            out_size = int(np.prod(np.array(out_shape[1:])))
+                                                                if se_on_bram:
+                                                                    add_sin = rate_out
+                                                                else:
+                                                                    add_sin = min(membw_branch, rate_out)
 
-                                                            thr_in = (self.cycles_per_sec*rate_in)/in_size
-                                                            thr_out = (self.cycles_per_sec*rate_out)/out_size
-                                                            
-                                                            if bram_total < 90.0:
-                                                                dsp_config.append(dsps_total)
-                                                                bram_config.append(bram_total)
-                                                                throughput_config.append(thr_out)
+                                                                a1_rin, a1_rout, a1_muls, a1_adds, a1_mem, a1_depth, _, _ = self.get_rates(keys[10], l_configs[keys[10]][a1][1], add_sin, membw_branch, membw_out)
+                                                                rate_out = a1_rout
+                                                                if membw_out < rate_out:
+                                                                    logging.error("LAYER: Memory bounded on writing output. Expected: {} - Max available: {}".format(rate_out, membw_out))
+                                                                rate_out = min(rate_out, membw_out)
+
+                                                                depth_total = r1_depth + c1_depth + b1_depth + r2_depth + c2_depth + b2_depth + se1_depth + sw1_depth + c3_depth + b3_depth
+
+                                                                mem_total = r1_mem + c1_mem + b1_mem + r2_mem + c2_mem + b2_mem + se1_mem + sw1_mem + c3_mem + b3_mem + a1_mem
+                                                                if se_on_bram:
+                                                                    mem_total += depth_total
+                                                                    # mem_branch = min(se1_depth / b2_rout, np.prod(np.array(l_configs[keys[6]][se1][1][0])))
+                                                                    # mem_total += mem_branch
+                                                                mem_kb = (mem_total*self.wb)/1e3
+                                                                bram_total = math.ceil(mem_kb/(self.bram_mem/8))
+                                                                bram_total = (bram_total/self.fpga_bram)*100
+
+                                                                dsps_total = r1_muls + c1_muls + b1_muls + r2_muls + c2_muls + b2_muls + se1_muls + sw1_muls + c3_muls + b3_muls + a1_muls
+                                                                dsps_total = (dsps_total/self.fpga_dsps)*100
+
+                                                                
+                                                                
+                                                                in_shape = self.modules[keys[0]]['shape_in']
+                                                                in_size = int(np.prod(np.array(in_shape[1:])))
+                                                                out_shape = self.modules[keys[10]]['shape_out']
+                                                                out_size = int(np.prod(np.array(out_shape[1:])))
+
+                                                                thr_in = (self.cycles_per_sec*rate_in)/in_size
+                                                                thr_out = (self.cycles_per_sec*rate_out)/out_size
+                                                                
+                                                                assert math.isclose(thr_out, thr_in), "Input and Output Throughput doesnt match. Aborting..."
+
+                                                                if bram_total < 90.0:
+                                                                    dsp_config.append(dsps_total)
+                                                                    bram_config.append(bram_total)
+                                                                    # throughput_config.append(thr_out)
+                                                                    throughput_config.append(min(c1_thr_out, c2_thr_out, se1_thr_out, c3_thr_out))
         elif len(sizes) == 10:
-            membw_in, membw_out, membw_branch = membw * 0.4, membw * 0.4, membw * 0.2
+            # membw_in, membw_out, membw_branch = membw * 0.4, membw * 0.4, membw * 0.2
+            membw_config = [(membw*0.2, membw*0.4, membw*0.4), (membw*0.4, membw*0.2, membw*0.4), (membw*0.3, membw*0.3, membw*0.4), (membw*0.5, membw*0.2, membw*0.3)]
             with tqdm(total=int(np.prod(np.array(sizes)))) as pbar:
                 for r1 in tqdm(range(sizes[0]), leave=False):
                     for c1 in tqdm(range(sizes[1]), leave=False):
@@ -1436,108 +1481,123 @@ class ModelFeatureMapsOnnx():
                                             for c3 in tqdm(range(sizes[7]), leave=False):
                                                 for b3 in tqdm(range(sizes[8]), leave=False):
                                                     for a1 in tqdm(range(sizes[9]), leave=False):
-                                                        pbar.update(1)
-                                                        # rates_graph = np.zeros( shape=(10,11) , dtype=float )
-                                                        rates_graph = np.zeros( shape=(9,10) , dtype=float )
+                                                        for membw_in, membw_out, membw_branch in tqdm(membw_config, leave=False):
+                                                            pbar.update(1)
+                                                            # rates_graph = np.zeros( shape=(10,11) , dtype=float )
+                                                            rates_graph = np.zeros( shape=(9,10) , dtype=float )
 
-                                                        r1_rin, r1_rout, r1_muls, r1_adds, r1_mem, r1_depth = self.get_rates(keys[0], l_configs[keys[0]][r1][1], membw_in, 10000)
-                                                        rates_graph[0,0] = r1_rin
-                                                        rates_graph[0,1] = r1_rout
-                                                        in_module_ratio = rates_graph[0,1] / rates_graph[0,0]
-                                                        rates_graph[0,0] = min(rates_graph[0,0], membw_in)
-                                                        rates_graph[0,1] = rates_graph[0,0] * in_module_ratio
-                                                        assert math.isclose(in_module_ratio, rates_graph[0,1] / rates_graph[0,0]), "wrong calculation of ratio"
+                                                            r1_rin, r1_rout, r1_muls, r1_adds, r1_mem, r1_depth, _, _ = self.get_rates(keys[0], l_configs[keys[0]][r1][1], membw_in, membw_branch, 10000)
+                                                            rates_graph[0,0] = r1_rin
+                                                            rates_graph[0,1] = r1_rout
+                                                            # in_module_ratio = rates_graph[0,1] / rates_graph[0,0]
+                                                            # rates_graph[0,0] = min(rates_graph[0,0], membw_in)
+                                                            # rates_graph[0,1] = rates_graph[0,0] * in_module_ratio
+                                                            # assert math.isclose(in_module_ratio, rates_graph[0,1] / rates_graph[0,0]), "wrong calculation of ratio"
 
-                                                        c1_rin, c1_rout, c1_muls, c1_adds, c1_mem, c1_depth = self.get_rates(keys[1], l_configs[keys[1]][c1][1], rates_graph[0,1], 10000)
-                                                        rates_graph[1,1] = c1_rin
-                                                        rates_graph[1,2] = c1_rout
+                                                            c1_rin, c1_rout, c1_muls, c1_adds, c1_mem, c1_depth, c1_thr_in, c1_thr_out = self.get_rates(keys[1], l_configs[keys[1]][c1][1], rates_graph[0,1], membw_branch, 10000)
+                                                            rates_graph[1,1] = c1_rin
+                                                            rates_graph[1,2] = c1_rout
 
-                                                        b1_rin, b1_rout, b1_muls, b1_adds, b1_mem, b1_depth = self.get_rates(keys[2], l_configs[keys[2]][b1][1], rates_graph[1,2], 10000)
-                                                        rates_graph[2,2] = b1_rin
-                                                        rates_graph[2,3] = b1_rout
+                                                            b1_rin, b1_rout, b1_muls, b1_adds, b1_mem, b1_depth, _, _ = self.get_rates(keys[2], l_configs[keys[2]][b1][1], rates_graph[1,2], membw_branch, 10000)
+                                                            rates_graph[2,2] = b1_rin
+                                                            rates_graph[2,3] = b1_rout
 
-                                                        r2_rin, r2_rout, r2_muls, r2_adds, r2_mem, r2_depth = self.get_rates(keys[3], l_configs[keys[3]][r2][1], rates_graph[2,3], 10000)
-                                                        rates_graph[3,3] = r2_rin
-                                                        rates_graph[3,4] = r2_rout
+                                                            r2_rin, r2_rout, r2_muls, r2_adds, r2_mem, r2_depth, _, _ = self.get_rates(keys[3], l_configs[keys[3]][r2][1], rates_graph[2,3], membw_branch, 10000)
+                                                            rates_graph[3,3] = r2_rin
+                                                            rates_graph[3,4] = r2_rout
+                                                            
+                                                            c2_rin, c2_rout, c2_muls, c2_adds, c2_mem, c2_depth, c2_thr_in, c2_thr_out = self.get_rates(keys[4], l_configs[keys[4]][c2][1], rates_graph[3,4], membw_branch, 10000)
+                                                            rates_graph[4,4] = c2_rin
+                                                            rates_graph[4,5] = c2_rout
+
+                                                            b2_rin, b2_rout, b2_muls, b2_adds, b2_mem, b2_depth, _, _ = self.get_rates(keys[5], l_configs[keys[5]][b2][1], rates_graph[4,5], membw_branch, 10000)
+                                                            rates_graph[5,5] = b2_rin
+                                                            rates_graph[5,6] = b2_rout
+
+                                                            sw1_rin, sw1_rout, sw1_muls, sw1_adds, sw1_mem, sw1_depth, _, _ = self.get_rates(keys[6], l_configs[keys[6]][sw1][1], rates_graph[5,6], membw_branch, 10000)
+                                                            rates_graph[6,6] = sw1_rin
+                                                            rates_graph[6,7] = sw1_rout
+
+                                                            c3_rin, c3_rout, c3_muls, c3_adds, c3_mem, c3_depth, c3_thr_in, c3_thr_out = self.get_rates(keys[7], l_configs[keys[7]][c3][1], rates_graph[6,7], membw_branch, 10000)
+                                                            rates_graph[7,7] = c3_rin
+                                                            rates_graph[7,8] = c3_rout
+
+                                                            b3_rin, b3_rout, b3_muls, b3_adds, b3_mem, b3_depth, _, _ = self.get_rates(keys[8], l_configs[keys[8]][b3][1], rates_graph[7,8], membw_branch, 10000)
+                                                            rates_graph[8,8] = b3_rin
+                                                            rates_graph[8,9] = b3_rout
+                                                            
+                                                            # a1_rin, a1_rout, a1_muls, a1_adds, a1_mem, a1_depth, _, _ = self.get_rates(keys[9], l_configs[keys[9]][a1][1], rates_graph[8,9], membw_branch, 10000)
+                                                            # a1_rin, a1_rout, a1_muls, a1_adds, a1_mem, a1_depth, _, _ = self.get_rates(keys[9], l_configs[keys[9]][a1][1], min(rates_graph[8,9], membw_branch), membw_branch, 10000)
+                                                            # rates_graph[9,9] = a1_rin
+                                                            # rates_graph[9,10] = a1_rout
+                                                            # out_module_ratio = rates_graph[9,10] / rates_graph[9,9]
+                                                            # rates_graph[9,10] = min(rates_graph[9,10], membw_out)
+                                                            # rates_graph[9,9] = rates_graph[9,10] / out_module_ratio
+                                                            # assert math.isclose(out_module_ratio, rates_graph[9,10] / rates_graph[9,9]), "wrong calculation of ratio"
+
+                                                            rates_graph_balanced = np.copy(rates_graph)
+                                                            rates_graph_balanced = self.balance_module_rates(rates_graph_balanced)
+
+                                                            if membw_in < rates_graph_balanced[0,0]:
+                                                                in_module_ratio = rates_graph_balanced[0,1] / rates_graph_balanced[0,0]
+                                                                rates_graph_balanced[0,0] = membw_in
+                                                                rates_graph_balanced[0,1] = rates_graph_balanced[0,0] * in_module_ratio
+                                                                assert math.isclose(in_module_ratio, rates_graph_balanced[0,1] / rates_graph_balanced[0,0]), "wrong calculation of ratio" 
+                                                                rates_graph_balanced = self.balance_module_rates(rates_graph_balanced) 
+
+                                                            rate_in = abs(rates_graph_balanced[0,0])
+                                                            rate_out = abs(rates_graph_balanced[8,9])
+
+                                                            in_shape = self.modules[keys[0]]['shape_in']
+                                                            in_size = int(np.prod(np.array(in_shape[1:])))
+                                                            out_shape = self.modules[keys[9]]['shape_out']
+                                                            out_size = int(np.prod(np.array(out_shape[1:])))
+
+                                                            # print("conv1 IN/OUT = {} / {}".format(c1_thr_in, c1_thr_out))
+                                                            # print("conv2 IN/OUT = {} / {}".format(c2_thr_in, c2_thr_out))
+                                                            # print("conv3 IN/OUT = {} / {}".format(c3_thr_in, c3_thr_out))
+                                                            # print("final IN/OUT = {} / {}".format((self.cycles_per_sec*rate_in)/in_size, (self.cycles_per_sec*rate_out)/out_size))
+
+                                                            if se_on_bram:
+                                                                add_sin = rate_out
+                                                            else:
+                                                                add_sin = min(membw_branch, rate_out)
+
+                                                            a1_rin, a1_rout, a1_muls, a1_adds, a1_mem, a1_depth, _, _ = self.get_rates(keys[9], l_configs[keys[9]][a1][1], add_sin, membw_branch, membw_out)
+                                                            rate_out = a1_rout
+                                                            if membw_out < rate_out:
+                                                                logging.error("LAYER: Memory bounded on writing output. Expected: {} - Max available: {}".format(rate_out, membw_out))
+                                                            rate_out = min(rate_out, membw_out)
+
+                                                            # print("final NEW IN/OUT = {} / {}".format((self.cycles_per_sec*rate_in)/in_size, (self.cycles_per_sec*rate_out)/out_size))
+                                                            depth_total = r1_depth + c1_depth + b1_depth + r2_depth + c2_depth + b2_depth + sw1_depth + c3_depth + b3_depth
                                                         
-                                                        c2_rin, c2_rout, c2_muls, c2_adds, c2_mem, c2_depth = self.get_rates(keys[4], l_configs[keys[4]][c2][1], rates_graph[3,4], 10000)
-                                                        rates_graph[4,4] = c2_rin
-                                                        rates_graph[4,5] = c2_rout
+                                                            mem_total = r1_mem + c1_mem + b1_mem + r2_mem + c2_mem + b2_mem + sw1_mem + c3_mem + b3_mem + a1_mem
+                                                            if se_on_bram:
+                                                                mem_total += depth_total
+                                                            mem_kb = (mem_total*self.wb)/1e3
+                                                            bram_total = math.ceil(mem_kb/(self.bram_mem/8))
+                                                            bram_total = (bram_total/self.fpga_bram)*100
 
-                                                        b2_rin, b2_rout, b2_muls, b2_adds, b2_mem, b2_depth = self.get_rates(keys[5], l_configs[keys[5]][b2][1], rates_graph[4,5], 10000)
-                                                        rates_graph[5,5] = b2_rin
-                                                        rates_graph[5,6] = b2_rout
+                                                            dsps_total = r1_muls + c1_muls + b1_muls + r2_muls + c2_muls + b2_muls + sw1_muls + c3_muls + b3_muls + a1_muls
+                                                            dsps_total = (dsps_total/self.fpga_dsps)*100
 
-                                                        sw1_rin, sw1_rout, sw1_muls, sw1_adds, sw1_mem, sw1_depth = self.get_rates(keys[6], l_configs[keys[6]][sw1][1], rates_graph[5,6], 10000)
-                                                        rates_graph[6,6] = sw1_rin
-                                                        rates_graph[6,7] = sw1_rout
+                                                            # rates_graph_balanced = np.copy(rates_graph)
+                                                            # rates_graph_balanced = self.balance_module_rates(rates_graph_balanced)
 
-                                                        c3_rin, c3_rout, c3_muls, c3_adds, c3_mem, c3_depth = self.get_rates(keys[7], l_configs[keys[7]][c3][1], rates_graph[6,7], 10000)
-                                                        rates_graph[7,7] = c3_rin
-                                                        rates_graph[7,8] = c3_rout
+                                                            # rate_in = abs(rates_graph_balanced[0,0])
+                                                            # rate_out = abs(rates_graph_balanced[9,10])
 
-                                                        b3_rin, b3_rout, b3_muls, b3_adds, b3_mem, b3_depth = self.get_rates(keys[8], l_configs[keys[8]][b3][1], rates_graph[7,8], 10000)
-                                                        rates_graph[8,8] = b3_rin
-                                                        rates_graph[8,9] = b3_rout
-                                                        
-                                                        # a1_rin, a1_rout, a1_muls, a1_adds, a1_mem, a1_depth = self.get_rates(keys[9], l_configs[keys[9]][a1][1], rates_graph[8,9], 10000)
-                                                        # a1_rin, a1_rout, a1_muls, a1_adds, a1_mem, a1_depth = self.get_rates(keys[9], l_configs[keys[9]][a1][1], min(rates_graph[8,9], membw_branch), 10000)
-                                                        # rates_graph[9,9] = a1_rin
-                                                        # rates_graph[9,10] = a1_rout
-                                                        # out_module_ratio = rates_graph[9,10] / rates_graph[9,9]
-                                                        # rates_graph[9,10] = min(rates_graph[9,10], membw_out)
-                                                        # rates_graph[9,9] = rates_graph[9,10] / out_module_ratio
-                                                        # assert math.isclose(out_module_ratio, rates_graph[9,10] / rates_graph[9,9]), "wrong calculation of ratio"
+                                                            thr_in = (self.cycles_per_sec*rate_in)/in_size
+                                                            thr_out = (self.cycles_per_sec*rate_out)/out_size
+                                                            
+                                                            # assert math.isclose(thr_out, thr_in), "Input and Output Throughput doesnt match. Aborting..."
 
-                                                        rates_graph_balanced = np.copy(rates_graph)
-                                                        rates_graph_balanced = self.balance_module_rates(rates_graph_balanced)
-
-                                                        rate_in = abs(rates_graph_balanced[0,0])
-                                                        rate_out = abs(rates_graph_balanced[8,9])
-
-                                                        if se_on_bram:
-                                                            add_sin = rate_out
-                                                        else:
-                                                            add_sin = min(membw_branch, rate_out)
-                                                        a1_rin, a1_rout, a1_muls, a1_adds, a1_mem, a1_depth = self.get_rates(keys[9], l_configs[keys[9]][a1][1], add_sin, membw_out)
-                                                        rate_in = a1_rin
-                                                        rate_out = a1_rout
-                                                        if membw_out < rate_out:
-                                                            logging.error("LAYER: Memory bounded on writing output. Expected: {} - Max available: {}".format(rate_out, membw_out))
-                                                        rate_out = min(rate_out, membw_out)
-
-                                                        depth_total = r1_depth + c1_depth + b1_depth + r2_depth + c2_depth + b2_depth + sw1_depth + c3_depth + b3_depth
-                                                    
-                                                        mem_total = r1_mem + c1_mem + b1_mem + r2_mem + c2_mem + b2_mem + sw1_mem + c3_mem + b3_mem + a1_mem
-                                                        if se_on_bram:
-                                                            mem_total += depth_total
-                                                        mem_kb = (mem_total*self.wb)/1e3
-                                                        bram_total = math.ceil(mem_kb/(self.bram_mem/8))
-                                                        bram_total = (bram_total/self.fpga_bram)*100
-
-                                                        dsps_total = r1_muls + c1_muls + b1_muls + r2_muls + c2_muls + b2_muls + sw1_muls + c3_muls + b3_muls + a1_muls
-                                                        dsps_total = (dsps_total/self.fpga_dsps)*100
-
-                                                        # rates_graph_balanced = np.copy(rates_graph)
-                                                        # rates_graph_balanced = self.balance_module_rates(rates_graph_balanced)
-
-                                                        # rate_in = abs(rates_graph_balanced[0,0])
-                                                        # rate_out = abs(rates_graph_balanced[9,10])
-                                                        
-                                                        in_shape = self.modules[keys[0]]['shape_in']
-                                                        in_size = int(np.prod(np.array(in_shape[1:])))
-                                                        out_shape = self.modules[keys[9]]['shape_out']
-                                                        out_size = int(np.prod(np.array(out_shape[1:])))
-
-                                                        thr_in = (self.cycles_per_sec*rate_in)/in_size
-                                                        thr_out = (self.cycles_per_sec*rate_out)/out_size
-
-                                                        assert math.isclose(thr_out, thr_in), "Input and Output Throughput doesnt match. Aborting..."
-
-                                                        if bram_total < 90.0:
-                                                            dsp_config.append(dsps_total)
-                                                            bram_config.append(bram_total)
-                                                            throughput_config.append(thr_out)
+                                                            if bram_total < 90.0:
+                                                                dsp_config.append(dsps_total)
+                                                                bram_config.append(bram_total)
+                                                                # throughput_config.append(thr_out)
+                                                                throughput_config.append(min(c1_thr_out, c2_thr_out, c3_thr_out))
         elif len(sizes) == 9:
             membw_in, membw_out, membw_branch = membw * 0.4, membw * 0.4, membw * 0.2
             with tqdm(total=int(np.prod(np.array(sizes)))) as pbar:
@@ -1553,7 +1613,7 @@ class ModelFeatureMapsOnnx():
                                                     pbar.update(1)
                                                     rates_graph = np.zeros( shape=(9,10) , dtype=float )
 
-                                                    r1_rin, r1_rout, r1_muls, r1_adds, r1_mem, r1_depth = self.get_rates(keys[0], l_configs[keys[0]][r1][1], membw_in, 10000)
+                                                    r1_rin, r1_rout, r1_muls, r1_adds, r1_mem, r1_depth, _, _ = self.get_rates(keys[0], l_configs[keys[0]][r1][1], membw_in, membw_branch, 10000)
                                                     rates_graph[0,0] = r1_rin
                                                     rates_graph[0,1] = r1_rout
                                                     in_module_ratio = rates_graph[0,1] / rates_graph[0,0]
@@ -1561,31 +1621,31 @@ class ModelFeatureMapsOnnx():
                                                     rates_graph[0,1] = rates_graph[0,0] * in_module_ratio
                                                     assert math.isclose(in_module_ratio, rates_graph[0,1] / rates_graph[0,0]), "wrong calculation of ratio"
 
-                                                    c1_rin, c1_rout, c1_muls, c1_adds, c1_mem, c1_depth = self.get_rates(keys[1], l_configs[keys[1]][c1][1], rates_graph[0,1], 10000)
+                                                    c1_rin, c1_rout, c1_muls, c1_adds, c1_mem, c1_depth, _, _ = self.get_rates(keys[1], l_configs[keys[1]][c1][1], rates_graph[0,1], membw_branch, 10000)
                                                     rates_graph[1,1] = c1_rin
                                                     rates_graph[1,2] = c1_rout
 
-                                                    b1_rin, b1_rout, b1_muls, b1_adds, b1_mem, b1_depth = self.get_rates(keys[2], l_configs[keys[2]][b1][1], rates_graph[1,2], 10000)
+                                                    b1_rin, b1_rout, b1_muls, b1_adds, b1_mem, b1_depth, _, _ = self.get_rates(keys[2], l_configs[keys[2]][b1][1], rates_graph[1,2], membw_branch, 10000)
                                                     rates_graph[2,2] = b1_rin
                                                     rates_graph[2,3] = b1_rout
 
-                                                    r2_rin, r2_rout, r2_muls, r2_adds, r2_mem, r2_depth = self.get_rates(keys[3], l_configs[keys[3]][r2][1], rates_graph[2,3], 10000)
+                                                    r2_rin, r2_rout, r2_muls, r2_adds, r2_mem, r2_depth, _, _ = self.get_rates(keys[3], l_configs[keys[3]][r2][1], rates_graph[2,3], membw_branch, 10000)
                                                     rates_graph[3,3] = r2_rin
                                                     rates_graph[3,4] = r2_rout
                                                     
-                                                    c2_rin, c2_rout, c2_muls, c2_adds, c2_mem, c2_depth = self.get_rates(keys[4], l_configs[keys[4]][c2][1], rates_graph[3,4], 10000)
+                                                    c2_rin, c2_rout, c2_muls, c2_adds, c2_mem, c2_depth, _, _ = self.get_rates(keys[4], l_configs[keys[4]][c2][1], rates_graph[3,4], membw_branch, 10000)
                                                     rates_graph[4,4] = c2_rin
                                                     rates_graph[4,5] = c2_rout
 
-                                                    b2_rin, b2_rout, b2_muls, b2_adds, b2_mem, b2_depth = self.get_rates(keys[5], l_configs[keys[5]][b2][1], rates_graph[4,5], 10000)
+                                                    b2_rin, b2_rout, b2_muls, b2_adds, b2_mem, b2_depth, _, _ = self.get_rates(keys[5], l_configs[keys[5]][b2][1], rates_graph[4,5], membw_branch, 10000)
                                                     rates_graph[5,5] = b2_rin
                                                     rates_graph[5,6] = b2_rout
 
-                                                    sw1_rin, sw1_rout, sw1_muls, sw1_adds, sw1_mem, sw1_depth = self.get_rates(keys[6], l_configs[keys[6]][sw1][1], rates_graph[5,6], 10000)
+                                                    sw1_rin, sw1_rout, sw1_muls, sw1_adds, sw1_mem, sw1_depth, _, _ = self.get_rates(keys[6], l_configs[keys[6]][sw1][1], rates_graph[5,6], membw_branch, 10000)
                                                     rates_graph[6,6] = sw1_rin
                                                     rates_graph[6,7] = sw1_rout
 
-                                                    c3_rin, c3_rout, c3_muls, c3_adds, c3_mem, c3_depth = self.get_rates(keys[7], l_configs[keys[7]][c3][1], rates_graph[6,7], 10000)
+                                                    c3_rin, c3_rout, c3_muls, c3_adds, c3_mem, c3_depth, _, _ = self.get_rates(keys[7], l_configs[keys[7]][c3][1], rates_graph[6,7], membw_branch, 10000)
                                                     rates_graph[7,7] = c3_rin
                                                     rates_graph[7,8] = c3_rout
                                                     out_module_ratio = rates_graph[7,8] / rates_graph[7,7]
@@ -1614,6 +1674,8 @@ class ModelFeatureMapsOnnx():
 
                                                     thr_in = (self.cycles_per_sec*rate_in)/in_size
                                                     thr_out = (self.cycles_per_sec*rate_out)/out_size
+                                                    
+                                                    assert math.isclose(thr_out, thr_in), "Input and Output Throughput doesnt match. Aborting..."
 
                                                     if bram_total < 90.0:
                                                         dsp_config.append(dsps_total)
@@ -1974,12 +2036,12 @@ def main():
     #     for _ in executor.map(onnx_modeling.thread_helper, args):
     #         pass
 
-    for n, l in enumerate(partition_layers):
-        if len(l) < 12:
-            print("Evaluating Layer {}/{}".format(n+1, len(partition_layers)))
-            onnx_modeling.compose_layers(fname_pareto, l, n+1, fname, args.calculate_pareto, onnx_modeling.max_words_per_cycle, se_on_bram=False)
+    # for n, l in enumerate(partition_layers):
+    #     if len(l) == 11:
+    #         print("Evaluating Layer {}/{}".format(n+1, len(partition_layers)))
+    #         onnx_modeling.compose_layers(fname_pareto, l, n+1, fname, args.calculate_pareto, onnx_modeling.max_words_per_cycle, se_on_bram=False)
 
-    # performance_graphs(file_name=fname, layers_to_plot=['Conv', 'Se', 'GlobalAveragePool'], calculate_pareto=args.calculate_pareto)
+    performance_graphs(file_name=fname, layers_to_plot=['Conv', 'Se', 'GlobalAveragePool'], calculate_pareto=args.calculate_pareto)
 
 if __name__ == '__main__':
     main()
