@@ -6,6 +6,7 @@ import coloredlogs
 import logging
 import onnx
 import json
+import itertools
 import concurrent.futures
 
 import numpy as np
@@ -20,8 +21,8 @@ from numpy.lib.function_base import append
 from numpy.testing._private.utils import assert_equal
 from functools import reduce
 
-coloredlogs.install(level='CRITICAL')
-logging.basicConfig(level=logging.CRITICAL)
+coloredlogs.install(level='INFO')
+logging.basicConfig(level=logging.INFO)
 np.set_printoptions(precision=5, suppress=True, linewidth=150)
 
 
@@ -302,20 +303,38 @@ class ModelFeatureMapsOnnx():
 
         return rate_in, rate_out, muls, adds, mem
 
-    def gap_layer_config(self, in_shape, s_in=1, s_out=1):
+    def gap_layer_config(self, in_shape, coarse=None, s_in=1, s_out=1):
         cin = in_shape[1]
         din = in_shape[2]
         hin = in_shape[3]
         win = in_shape[4]
 
-        rate_in = 1 * s_in
-        rate_out = 1/(din * hin * win) * s_in
+        if coarse is not None:
+            gap_folding = coarse
+        else:
+            gap_folding = s_in
+
+        rate_in = 1 * gap_folding
+        rate_out = 1/(din * hin * win) * gap_folding
         mem = cin
-        muls = 2 * s_in
-        adds = 1 * s_in
+        muls = 2 * gap_folding
+        adds = 1 * gap_folding
         depth = cin * din * hin * win
 
-        return rate_in, rate_out, muls, adds, mem, depth
+        mem_bounded_in = False
+        if s_in < rate_in:
+            in_module_ratio = rate_out / rate_in
+            rate_in = s_in
+            rate_out = rate_in * in_module_ratio
+            assert math.isclose(in_module_ratio, rate_out / rate_in), "wrong calculation of ratio"
+            mem_bounded_in = True 
+
+        mem_bounded_out = False
+        if s_out < rate_out:
+            mem_bounded_out = True
+            rate_out = mem_bounded_out
+
+        return rate_in, rate_out, muls, adds, mem, depth, (mem_bounded_in, mem_bounded_out)
 
     def swish_layer_config(self, s_in=1, s_out=1):
         rate_in = 1 * s_in
@@ -406,25 +425,24 @@ class ModelFeatureMapsOnnx():
         # print("-"*50)
         rates_graph = self.balance_module_rates(rates_graph)
         # print(rates_graph)
-        # print("=="*50)
+        # print("=="*50)     
 
-        # #TODO: IF mem_bw_in > rates_graph[0,0] then we need to buffer the incoming values to keep up with the processing OR reduce the mem_bw_in rate to match our needs.
-        # #TODO: IF mem_bw_in < rates_graph[0,0] then we need to stall the processing in order to wait for next data to arrive. We need to use less resources or fold even more to match the mem_bw_in rate.
+        mem_bounded_in = False
         if mem_bw_in < rates_graph[0,0]:
             in_module_ratio = rates_graph[0,1] / rates_graph[0,0]
             rates_graph[0,0] = mem_bw_in
             rates_graph[0,1] = rates_graph[0,0] * in_module_ratio
             assert math.isclose(in_module_ratio, rates_graph[0,1] / rates_graph[0,0]), "wrong calculation of ratio" 
             rates_graph = self.balance_module_rates(rates_graph)
-        if mem_bw_out < rates_graph[3,4]:
-            out_module_ratio = rates_graph[3,4] / rates_graph[3,3]
-            rates_graph[3,4] = mem_bw_out
-            rates_graph[3,3] = rates_graph[3,4] / out_module_ratio
-            assert math.isclose(out_module_ratio, rates_graph[3,4] / rates_graph[3,3]), "wrong calculation of ratio"
-            rates_graph = self.balance_module_rates(rates_graph)          
+            mem_bounded_in = True
 
         rate_in = abs(rates_graph[0,0])
         rate_out = abs(rates_graph[3,4])
+
+        mem_bounded_out = False
+        if mem_bw_out < rate_out:
+            mem_bounded_out = True
+            rate_out = mem_bw_out
 
         if kd == 1 and kh == 1 and kw == 1:
             pb = 1
@@ -446,27 +464,26 @@ class ModelFeatureMapsOnnx():
         muls = math.ceil(muls_unrl * coarse_in * coarse_out)
         #TODO: This calculations are not correct. Need revision.
         adds = math.ceil(adds_unrl_1 * coarse_in * coarse_out) + math.ceil(adds_unrl_2 * coarse_in * coarse_out)
-        return rate_in, rate_out, muls, adds, mem, depth
+        return rate_in, rate_out, muls, adds, mem, depth, (mem_bounded_in, mem_bounded_out)
 
-    def se_layer_config(self, glavpool_in_shape, conv1_in_shape, conv1_out_shape, conv1_kernel_shape, conv1_padding, conv1_groups, fine1, coarse_in_1, coarse_out_1, conv2_in_shape, conv2_out_shape, conv2_kernel_shape, conv2_padding, conv2_groups, fine2, coarse_in_2, coarse_out_2, bw_in=1, bw_total=1, se_on_bram=1):
+    def se_layer_config(self, glavpool_in_shape, glavpool_coarse, conv1_in_shape, conv1_out_shape, conv1_kernel_shape, conv1_padding, conv1_groups, fine1, coarse_in_1, coarse_out_1, conv2_in_shape, conv2_out_shape, conv2_kernel_shape, conv2_padding, conv2_groups, fine2, coarse_in_2, coarse_out_2, bw_in=1, bw_total=1, se_on_bram=1):
         
         mem_bw_in = bw_in
-        mem_bw_out = (bw_total - bw_in) / 2
         mem_bw_total = bw_total
 
-        glavpool_rate_in, glavpool_rate_out, glavpool_muls, glavpool_adds, glavpool_mem, glavpool_depth = self.gap_layer_config(glavpool_in_shape, s_in=mem_bw_in, s_out=10000)
+        glavpool_rate_in, glavpool_rate_out, glavpool_muls, glavpool_adds, glavpool_mem, glavpool_depth, (glavpool_mem_bounded_in, glavpool_mem_bounded_out) = self.gap_layer_config(glavpool_in_shape, coarse=glavpool_coarse, s_in=mem_bw_in, s_out=10000)
         glavpool_thr_in = (self.cycles_per_sec*glavpool_rate_in)/int(np.prod(np.array(glavpool_in_shape[1:])))
         glavpool_thr_out = (self.cycles_per_sec*glavpool_rate_out)/int(glavpool_in_shape[1])
         assert math.isclose(glavpool_thr_in, glavpool_thr_out), "Input and Output Throughputs doesnt match on glavpool. Aborting..."
 
-        conv1_rate_in, conv1_rate_out, conv1_muls, conv1_adds, conv1_mem, conv1_depth = self.conv_layer_config(conv1_in_shape, conv1_out_shape, conv1_kernel_shape, conv1_padding, conv1_groups, fine1, coarse_in_1, coarse_out_1, s_in=glavpool_rate_out, s_out=10000)
+        conv1_rate_in, conv1_rate_out, conv1_muls, conv1_adds, conv1_mem, conv1_depth, (conv1_mem_bounded_in, conv1_mem_bounded_out) = self.conv_layer_config(conv1_in_shape, conv1_out_shape, conv1_kernel_shape, conv1_padding, conv1_groups, fine1, coarse_in_1, coarse_out_1, s_in=glavpool_rate_out, s_out=10000)
         conv1_thr_in = (self.cycles_per_sec*conv1_rate_in)/int(np.prod(np.array(conv1_in_shape[1:])))
         conv1_thr_out = (self.cycles_per_sec*conv1_rate_out)/int(np.prod(np.array(conv1_out_shape[1:])))
         assert math.isclose(conv1_thr_in, conv1_thr_out), "Input and Output Throughputs doesnt match on conv1. Aborting..."
 
         relu_rate_in, relu_rate_out, _, _, _ = self.relu_layer_config(s_in=conv1_rate_out)
 
-        conv2_rate_in, conv2_rate_out, conv2_muls, conv2_adds, conv2_mem, conv2_depth = self.conv_layer_config(conv2_in_shape, conv2_out_shape, conv2_kernel_shape, conv2_padding, conv2_groups, fine2, coarse_in_2, coarse_out_2, s_in=relu_rate_out, s_out=10000)
+        conv2_rate_in, conv2_rate_out, conv2_muls, conv2_adds, conv2_mem, conv2_depth, (conv2_mem_bounded_in, conv2_mem_bounded_out) = self.conv_layer_config(conv2_in_shape, conv2_out_shape, conv2_kernel_shape, conv2_padding, conv2_groups, fine2, coarse_in_2, coarse_out_2, s_in=relu_rate_out, s_out=10000)
         conv2_thr_in = (self.cycles_per_sec*conv2_rate_in)/int(np.prod(np.array(conv2_in_shape[1:])))
         conv2_thr_out = (self.cycles_per_sec*conv2_rate_out)/int(np.prod(np.array(conv2_out_shape[1:])))
         assert math.isclose(conv2_thr_in, conv2_thr_out), "Input and Output Throughputs doesnt match on conv2. Aborting..."
@@ -476,12 +493,6 @@ class ModelFeatureMapsOnnx():
         rates_graph = np.zeros( shape=(5,6) , dtype=float )
         rates_graph[0,0] = glavpool_rate_in
         rates_graph[0,1] = glavpool_rate_out
-        # in_module_ratio = rates_graph[0,1] / rates_graph[0,0]
-        # if mem_bw_in < rates_graph[0,0]:
-        #     logging.error("SE OP: Memory bounded on reading input. Expected: {} - Max available: {}".format(rates_graph[0,0], mem_bw_in))
-        # rates_graph[0,0] = min(rates_graph[0,0], mem_bw_in)
-        # rates_graph[0,1] = rates_graph[0,0] * in_module_ratio
-        # assert math.isclose(in_module_ratio,rates_graph[0,1] / rates_graph[0,0]), "wrong calculation of ratio"
 
         rates_graph[1,1] = conv1_rate_in
         rates_graph[1,2] = conv1_rate_out
@@ -495,15 +506,6 @@ class ModelFeatureMapsOnnx():
         rates_graph[4,4] = sigmoid_rate_in
         rates_graph[4,5] = sigmoid_rate_out
 
-        # rates_graph[5,5] = elemwise_mul_rate_in
-        # rates_graph[5,6] = elemwise_mul_rate_out 
-        # out_module_ratio = rates_graph[5,6] / rates_graph[5,5]
-        # if mem_bw_out < rates_graph[5,6]:
-        #     logging.error("SE OP: Memory bounded on writing output. Expected: {} - Max available: {}".format(rates_graph[5,6], mem_bw_out))
-        # rates_graph[5,6] = min(rates_graph[5,6], mem_bw_out)  
-        # rates_graph[5,5] = rates_graph[5,6] / out_module_ratio
-        # assert math.isclose(out_module_ratio, rates_graph[5,6] / rates_graph[5,5]), "wrong calculation of ratio"
-
         # print("SE RATE GRAPH")
         # print(rates_graph)
         # print("-"*50)
@@ -511,70 +513,53 @@ class ModelFeatureMapsOnnx():
         # print(rates_graph)
         # print("=="*50)
 
+        mem_bounded_in = False
         if mem_bw_in < rates_graph[0,0]:
             in_module_ratio = rates_graph[0,1] / rates_graph[0,0]
             rates_graph[0,0] = mem_bw_in
             rates_graph[0,1] = rates_graph[0,0] * in_module_ratio
             assert math.isclose(in_module_ratio, rates_graph[0,1] / rates_graph[0,0]), "wrong calculation of ratio" 
-            rates_graph = self.balance_module_rates(rates_graph) 
-
-        if mem_bw_out < rates_graph[4,5]:
-            out_module_ratio = rates_graph[4,5] / rates_graph[4,4]
-            rates_graph[4,5] = mem_bw_out 
-            rates_graph[4,4] = rates_graph[4,5] / out_module_ratio
-            assert math.isclose(out_module_ratio, rates_graph[4,5] / rates_graph[4,4]), "wrong calculation of ratio"
-            rates_graph = self.balance_module_rates(rates_graph) 
-
+            rates_graph = self.balance_module_rates(rates_graph)
+            mem_bounded_in = True
+        if glavpool_mem_bounded_in:
+            mem_bounded_in = True
+            
         rate_in = abs(rates_graph[0,0])
         rate_out = abs(rates_graph[4,5])
+        rate_broadcasting = rate_out * int(np.prod(np.array(glavpool_in_shape[2:])))
         se_thr_in = (self.cycles_per_sec*rate_in)/int(np.prod(np.array(glavpool_in_shape[1:])))
         se_thr_out = (self.cycles_per_sec*rate_out)/int(np.prod(np.array(conv2_out_shape[1:])))
         assert math.isclose(se_thr_in, se_thr_out), "Input and Output Throughputs doesnt match on se branch. Aborting..."
 
         #TODO:  Revise this branching behaviour. Shouldnt this be rate out? Take into consideration the broadcasting behaviour of MUL operation.
-        #       SE rate out should be equal to left branch rate out / (DxHxW) 
+        #       SE rate out should be equal to left branch rate out / (DxHxW)
+        mem_bw_left = mem_bw_total - rate_in
         if se_on_bram == 1:
-            mem_bw_left = mem_bw_total - mem_bw_in
-            best_mem_bw_out = rate_in
-            best_mem_bw_branch = rate_in
+            best_mem_bw_out = mem_bw_left
+            best_mem_bw_branch = rate_broadcasting
         else:
-            mem_bw_left = mem_bw_total - mem_bw_in
-            if rate_in <= mem_bw_left/2:
-                best_mem_bw_out = rate_in
-                best_mem_bw_branch = rate_in
+            mem_bw_left -= rate_broadcasting
+            if mem_bw_left > 0:
+                best_mem_bw_out = mem_bw_left
+                best_mem_bw_branch = rate_broadcasting
             else:
+                mem_bw_left += rate_broadcasting
                 best_mem_bw_out = mem_bw_left/2
                 best_mem_bw_branch = mem_bw_left/2
-                logging.error("Re-evaluate the way memory bw is being calculated")
-                # exit()
-
-        # norm_rate_in = (self.cycles_per_sec*rate_in)/np.prod(np.array(glavpool_in_shape[1:]))
-        # norm_rate_out = (self.cycles_per_sec*rate_out)/np.prod(np.array(conv2_out_shape[1:]))
-        # norm_rate_in_left = (self.cycles_per_sec*best_mem_bw_branch)/np.prod(np.array(glavpool_in_shape[1:]))
-        # norm_rate_out_left = (self.cycles_per_sec*best_mem_bw_branch)/np.prod(np.array(glavpool_in_shape[1:]))
-        # logging.error("normalized rates right branch = {} / {}. left branch = {} / {}.".format(norm_rate_in, norm_rate_out, norm_rate_in_left, norm_rate_out_left))
-        # logging.error("mem bw in {} out {} branch {}. Mem bw available {}. Calc mem bw out {} mem bw br {}".format(mem_bw_in, mem_bw_out, mem_bw_branch, mem_bw_left, best_mem_bw_out, best_mem_bw_branch))
+                mem_bounded_in = True
         
         assert math.isclose(min(glavpool_thr_out, conv1_thr_out, conv2_thr_out), se_thr_out), "Invalid Throughput Balancing. Aborting..."
-        # left_branch_limit = False
-        # if se_on_bram == 1:
-        #     mul_sin = rate_out
-        # else:
-        #     left_branch_throughput = (self.cycles_per_sec*mem_bw_branch)/int(np.prod(np.array(glavpool_in_shape[1:])))
-        #     right_branch_throughput = se_thr_out
-        #     if left_branch_throughput < right_branch_throughput:
-        #         mul_sin = mem_bw_branch
-        #         left_branch_limit = True
-        #     else:
-        #         mul_sin = rate_out
+
         elemwise_mul_rate_in, elemwise_mul_rate_out, elemwise_mul_rate_muls, _, _ = self.mul_layer_config(s_in=best_mem_bw_branch)
         
         rate_in = elemwise_mul_rate_in
         rate_out = elemwise_mul_rate_out
 
+        assert mem_bw_in >= rate_in, "Memory bounded on SE input"
+        mem_bounded_out = False
         if best_mem_bw_out < rate_out:
-            logging.error("SE OP: Memory bounded on writing output. Expected: {} - Max available: {}".format(rate_out, best_mem_bw_out))
-            rate_out = best_mem_bw_out
+            mem_bounded_out = True
+            rate_out = mem_bounded_out
 
         muls = glavpool_muls + conv1_muls + conv2_muls + sigmoid_muls + elemwise_mul_rate_muls
         adds = glavpool_adds + conv1_adds + conv2_adds
@@ -583,7 +568,7 @@ class ModelFeatureMapsOnnx():
 
         if se_on_bram == 1:
             mem += depth
-        return rate_in, rate_out, muls, adds, mem, depth
+        return rate_in, rate_out, muls, adds, mem, depth, (mem_bounded_in, mem_bounded_out)
 
     def get_layer_from_id(self, layer_id):
         for k in self.layers.keys():
@@ -606,17 +591,20 @@ class ModelFeatureMapsOnnx():
             input_shape = self.layers[k]['input'][0]
             output_shape = self.layers[k]['output']
             
+            branching = False
             if len(self.layers[k]['input']) > 1:
                 in1_layer, in1_layer_name = self.get_layer_from_id(int(self.layers[k]['input_id'][0]))
                 in2_layer, in2_layer_name = self.get_layer_from_id(int(self.layers[k]['input_id'][1]))
                 oldest_input = min(int(in1_layer['output_id']), int(in2_layer['output_id'])) if (in1_layer is not None and in2_layer is not None) else int(self.layers[k]['output_id'])
-                # print("Layer name = {} ({}). Input_0 = {} ({}). Input_1 = {} ({})".format(name, self.layers[k]['output_id'], in1_layer_name, self.layers[k]['input_id'][0], in2_layer_name, self.layers[k]['input_id'][1]))
+                logging.info("Layer name = {} ({}). Input_0 = {} ({}). Input_1 = {} ({})".format(name, self.layers[k]['output_id'], in1_layer_name, self.layers[k]['input_id'][0], in2_layer_name, self.layers[k]['input_id'][1]))
             else:
                 in1_layer, in1_layer_name = self.get_layer_from_id(int(self.layers[k]['input_id'][0]))
                 oldest_input = int(in1_layer['output_id']) if in1_layer is not None else int(self.layers[k]['output_id'])
-                # print("Layer name = {} ({}). Input = {} ({})".format(name, self.layers[k]['output_id'], in1_layer_name, self.layers[k]['input_id'][0]))
-            if int(self.layers[k]['output_id']) - oldest_input > 2:
-                print("Identified a branching behaviour")
+                logging.info("Layer name = {} ({}). Input = {} ({})".format(name, self.layers[k]['output_id'], in1_layer_name, self.layers[k]['input_id'][0]))
+            #TODO: Should find a more generic way to detect and filter branching behaviours on networks.
+            if int(self.layers[k]['output_id']) - oldest_input > 3:
+                branching = True
+                logging.warning("Identified a branching behaviour on layer {}".format(name))
 
             if operation == 'Mul' or operation == 'Add':
                 input_shape = output_shape
@@ -631,7 +619,8 @@ class ModelFeatureMapsOnnx():
                                   "kernel": kernel,
                                   "bias": bias,
                                   "groups": groups,
-                                  "padding": padding}
+                                  "padding": padding,
+                                  "branching": branching}
 
             swish_module.append([operation, name])
             if swish_module[0][0] == 'Sigmoid' and swish_module[1][0] == 'Mul' and swish_module[2][0] == 'Conv':
@@ -681,7 +670,8 @@ class ModelFeatureMapsOnnx():
                                       "shape_in": swish_input_shape,
                                       "shape_out": swish_output_shape,
                                       sigmoid_name: sigmoid,
-                                      mul_name: mul}
+                                      mul_name: mul,
+                                      "branching": False}
 
                 del self.modules[sigmoid_name]
                 del self.modules[mul_name]
@@ -704,7 +694,8 @@ class ModelFeatureMapsOnnx():
                                     "kernel": kernel,
                                     "bias": bias,
                                     "groups": groups,
-                                    "padding": padding}
+                                    "padding": padding,
+                                    "branching": False}
 
             se_module.append([operation, name])
             if se_module[0][0] == 'GlobalAveragePool' and se_module[1][0] == 'Conv' and se_module[2][0] == 'Relu' and se_module[3][0] == 'Conv' and se_module[4][0] == 'Sigmoid' and se_module[5][0] == 'Mul':
@@ -832,7 +823,8 @@ class ModelFeatureMapsOnnx():
                                       relu_name: relu,
                                       conv2_name: conv2,
                                       sigmoid_name: sigmoid,
-                                      mul_name: mul}
+                                      mul_name: mul,
+                                      "branching": False}
 
                 del self.modules[gap_name]
                 del self.modules[conv1_name]
@@ -841,7 +833,7 @@ class ModelFeatureMapsOnnx():
                 del self.modules[sigmoid_name]
                 del self.modules[mul_name]
 
-    def model_layer(self, layer, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, config=None, inter_size=None, buffering_enabled=False, module_mem_bw_in=-1):
+    def model_layer(self, layer, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, mem_bounded_out=False, config=None, inter_size=None, buffering_enabled=False, module_mem_bw_in=-1):
         l_config = config if config is not None else "No configuration available"
         layer = layer
         folding = folding_name
@@ -865,26 +857,16 @@ class ModelFeatureMapsOnnx():
 
         thr_in = (self.cycles_per_sec*thr_w_in)/in_size
         thr_out = (self.cycles_per_sec*thr_w_out)/out_size
-        # thr_out_mem_bw = (self.cycles_per_sec*module_mem_bw_in)/in_size
-        # print(thr_out, thr_out_mem_bw)
-        # if inter_size is not None:
-        #     thr_out = (self.cycles_per_sec*thr_w_out)/inter_size
-
-        # if buffering_enabled:
-        #     thr_out = thr_inter
-        # else:
-        #     if inter_size is not None:
-        #         thr_out = min(thr_inter, thr_out_mem_bw)
 
         thr_go = ((muls + adds)*self.cycles_per_sec)/1e9
         dsps_util = (dsps/self.fpga_dsps)*100
 
-        assert math.isclose(thr_out, thr_in), "Input and Output Throughput doesnt match. Aborting..."
+        assert math.isclose(thr_out, thr_in) or mem_bounded_out, "Input and Output Throughput doesnt match. Aborting..."
 
         if dsps_util < 90.0 and mem_util < 90.0:
             csv_writer.writerow([layer, folding, mem_util, dsps_util, thr_in, thr_out, bw_in_w, bw_out_w, mem_kb, mem_bram, bw_in_gb, bw_out_gb, muls, adds, dsps, thr_w_out, thr_go, l_config])
 
-            print("On Chip Mem (BRAM %) = {:<15.5f} DSPS % = {:<20.5f}\nConsumption(inputs/sec) = {:<20.5f} Throughtput(outputs/sec) = {:<20.5f}\nMemory Bandwidth In(words/cycle) = {:<20.5f} Memory Bandwidth Out(words/cycle) = {:<20.5f}\nOn-Chip Memory(KB) = {:<20.5f} On-Chip Memory(BRAM) = {:<20.5f} Adds = {:<20.5f} DSPS = {:<20.5f}\nMemory Bandwidth In(GBs/sec) = {:<20.5f} Memory Bandwidth Out(GBs/sec) = {:<20.5f}\nThroughtput(GOps/sec) = {:.3f}".format(mem_util, dsps_util, thr_in, thr_out, bw_in_w, bw_out_w, mem_kb, mem_bram, adds, dsps, bw_in_gb, bw_out_gb, thr_go))
+            logging.info("On Chip Mem (BRAM %) = {:<15.5f} DSPS % = {:<20.5f}\nConsumption(inputs/sec) = {:<20.5f} Throughtput(outputs/sec) = {:<20.5f}\nMemory Bandwidth In(words/cycle) = {:<20.5f} Memory Bandwidth Out(words/cycle) = {:<20.5f}\nOn-Chip Memory(KB) = {:<20.5f} On-Chip Memory(BRAM) = {:<20.5f} Adds = {:<20.5f} DSPS = {:<20.5f}\nMemory Bandwidth In(GBs/sec) = {:<20.5f} Memory Bandwidth Out(GBs/sec) = {:<20.5f}\nThroughtput(GOps/sec) = {:.3f}".format(mem_util, dsps_util, thr_in, thr_out, bw_in_w, bw_out_w, mem_kb, mem_bram, adds, dsps, bw_in_gb, bw_out_gb, thr_go))
         else:
             logging.warning("Design point dropped because of too many recourses needed. DSPS = {} ({}%). BRAM = {} ({}%)".format(dsps, dsps_util, mem_bram, mem_util))
 
@@ -936,7 +918,7 @@ class ModelFeatureMapsOnnx():
                         # if kd == 1 and kh == 1 and kw == 1:
                         #     pr_name = pr_name + "_PointWise"
 
-                        coarse_in_config = [1, (cin * groups)//4, (cin * groups)//2, cin * groups]
+                        coarse_in_config = [1, (cin)//4, (cin)//2, cin]
                         coarse_in_config = np.unique(coarse_in_config)
                         coarse_in_config = coarse_in_config[np.nonzero(coarse_in_config)].tolist()
                         coarse_out_config = [1, cout//4, cout//2, cout]
@@ -959,10 +941,10 @@ class ModelFeatureMapsOnnx():
 
                                         logging.warning("Fold = {}. Channels In = {} - Filters = {}".format(folding_name, cin, cout))
 
-                                        rate_in, rate_out, muls, adds, mem, depth = self.conv_layer_config(in_shape, out_shape, kernel_shape, padding, groups, fine, coarse_in, coarse_out, s_in=conv_bw_in, s_out=conv_bw_out)
+                                        rate_in, rate_out, muls, adds, mem, depth, (mem_bounded_in, mem_bounded_out) = self.conv_layer_config(in_shape, out_shape, kernel_shape, padding, groups, fine, coarse_in, coarse_out, s_in=conv_bw_in, s_out=conv_bw_out)
 
-                                        current_config = [in_shape, out_shape, kernel_shape, padding, groups, fine, coarse_in, coarse_out]
-                                        self.model_layer(pr_name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, current_config)
+                                        current_config = [in_shape, out_shape, kernel_shape, padding, groups, fine, coarse_in, coarse_out, int(mem_bounded_in), int(mem_bounded_out)]
+                                        self.model_layer(pr_name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, mem_bounded_out=mem_bounded_out, config=current_config)
 
                     elif operation == 'SqueezeExcitation':
                         out_shape = self.modules[name]['shape_out']
@@ -989,6 +971,9 @@ class ModelFeatureMapsOnnx():
                         se_keys = list(self.modules[name].keys())
                         glavpool_key = se_keys[4]
                         glavpool_in_shape = self.modules[name][glavpool_key]['shape_in']
+                        coarse_gap_config = [1, glavpool_in_shape[1]//8, glavpool_in_shape[1]//4, glavpool_in_shape[1]//2, glavpool_in_shape[1]]
+                        coarse_gap_config = np.unique(coarse_gap_config)
+                        coarse_gap_config = coarse_gap_config[np.nonzero(coarse_gap_config)].tolist()
 
                         conv1_key = se_keys[5]
                         conv1_in_shape = self.modules[name][conv1_key]['shape_in']
@@ -1046,32 +1031,29 @@ class ModelFeatureMapsOnnx():
 
                         mem_bw = s_in + s_out
                         mem_bw_config = [mem_bw*0.2, mem_bw*0.4, mem_bw*0.6, mem_bw*0.8, mem_bw*0.9]
-                        for coarse_in_1 in coarse_in_config_conv1:
-                            for coarse_in_2 in coarse_in_config_conv2:
-                                for coarse_out_1 in coarse_out_config_conv1:
-                                    for coarse_out_2 in coarse_out_config_conv2:
-                                        for fine_1 in fine_config_1:
-                                            for fine_2 in fine_config_2:
-                                                for se_bw_in in mem_bw_config:
-                                                    for se_on_bram in [0, 1]:
-                                                        # if not coarse_out_1 == coarse_in_2:
-                                                        #     logging.error("Skipping configuration N_Coarse_1({}/{}) - N_Coarse_2({}/{}) - f_Fine_1({}) - f_Fine_2({}) since N_Coarse_1 out ({}) does not match with N_Coarse_2 in ({}).".format(coarse_in_1, coarse_out_1, coarse_in_2, coarse_out_2, fine_1, fine_2, coarse_out_1, coarse_in_2))
-                                                        #     continue
+                        for coarse_gap in coarse_gap_config:
+                            for coarse_in_1 in coarse_in_config_conv1:
+                                for coarse_in_2 in coarse_in_config_conv2:
+                                    for coarse_out_1 in coarse_out_config_conv1:
+                                        for coarse_out_2 in coarse_out_config_conv2:
+                                            for fine_1 in fine_config_1:
+                                                for fine_2 in fine_config_2:
+                                                    for se_bw_in in mem_bw_config:
+                                                        for se_on_bram in [0, 1]:
 
-                                                        folding_name = "N_Coarse_1({}/{}) - N_Coarse_2({}/{}) - f_Fine_1({:.2f}) - f_Fine_2({:.2f}) - Mem BW IN {:.2f}".format(coarse_in_1, coarse_out_1, coarse_in_2, coarse_out_2, fine_1, fine_2, se_bw_in)
-                                                        if se_on_bram:
-                                                            folding_name += " - BRAM"
-                                                        logging.warning("Fold = {}".format(folding_name))
-                                                        
-                                                        rate_in, rate_out, muls, adds, mem, depth = self.se_layer_config(glavpool_in_shape, conv1_in_shape, conv1_out_shape, conv1_kernel_shape, conv1_padding, conv1_groups, fine_1, coarse_in_1, coarse_out_1, conv2_in_shape, conv2_out_shape, conv2_kernel_shape, conv2_padding, conv2_groups, fine_2, coarse_in_2, coarse_out_2, bw_in=se_bw_in, bw_total=mem_bw, se_on_bram=se_on_bram)
-        
-                                                        #TODO: Added worst possible case for buffering on se module i.e., buffer the whole feature map and all of the channels. Should fix this by checking the depth/latency of the left branch in order to calculate the exact buffering that is gonna needed in each se module.
-                                                        #TODO: Another solution is to read again from off-chip memory which will prevent the buffering i.e., reduce the BRAM needs BUT will reduce the mem bw in total as well since we need to first write the results (in a bigger layer-wise partition) and the read them again i.e., will probably need to have mem_bw / 4 instead of mem_bw / 2 in each point that we access the off-chip memory.
-                                                        branch_buffering = depth * se_bw_in
+                                                            folding_name = "N_Coarse_1({}/{}) - N_Coarse_2({}/{}) - f_Fine_1({:.2f}) - f_Fine_2({:.2f}) - Mem BW IN {:.2f}".format(coarse_in_1, coarse_out_1, coarse_in_2, coarse_out_2, fine_1, fine_2, se_bw_in)
+                                                            if se_on_bram:
+                                                                folding_name += " - BRAM"
+                                                            logging.warning("Fold = {}".format(folding_name))
+                                                            
+                                                            rate_in, rate_out, muls, adds, mem, depth, (mem_bounded_in, mem_bounded_out) = self.se_layer_config(glavpool_in_shape, coarse_gap, conv1_in_shape, conv1_out_shape, conv1_kernel_shape, conv1_padding, conv1_groups, fine_1, coarse_in_1, coarse_out_1, conv2_in_shape, conv2_out_shape, conv2_kernel_shape, conv2_padding, conv2_groups, fine_2, coarse_in_2, coarse_out_2, bw_in=se_bw_in, bw_total=mem_bw, se_on_bram=se_on_bram)
+            
+                                                            #TODO: Added worst possible case for buffering on se module i.e., buffer the whole feature map and all of the channels. Should fix this by checking the depth/latency of the left branch in order to calculate the exact buffering that is gonna needed in each se module.
+                                                            #TODO: Another solution is to read again from off-chip memory which will prevent the buffering i.e., reduce the BRAM needs BUT will reduce the mem bw in total as well since we need to first write the results (in a bigger layer-wise partition) and the read them again i.e., will probably need to have mem_bw / 4 instead of mem_bw / 2 in each point that we access the off-chip memory.
 
-                                                        current_config = [glavpool_in_shape, conv1_in_shape, conv1_out_shape, conv1_kernel_shape, conv1_padding, conv1_groups, fine_1, coarse_in_1, coarse_out_1, conv2_in_shape, conv2_out_shape, conv2_kernel_shape, conv2_padding, conv2_groups, fine_2, coarse_in_2, coarse_out_2, se_on_bram]
+                                                            current_config = [glavpool_in_shape, coarse_gap, conv1_in_shape, conv1_out_shape, conv1_kernel_shape, conv1_padding, conv1_groups, fine_1, coarse_in_1, coarse_out_1, conv2_in_shape, conv2_out_shape, conv2_kernel_shape, conv2_padding, conv2_groups, fine_2, coarse_in_2, coarse_out_2, se_on_bram, int(mem_bounded_in), int(mem_bounded_out)]
 
-                                                        self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, current_config, br_size, se_on_bram, se_bw_in)
+                                                            self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, mem_bounded_out=mem_bounded_out, config=current_config, inter_size=br_size, buffering_enabled=se_on_bram, module_mem_bw_in=se_bw_in)
 
                     elif operation == 'BatchNormalization':
                         out_shape = self.modules[name]['shape_out']
@@ -1090,7 +1072,7 @@ class ModelFeatureMapsOnnx():
 
                         rate_in, rate_out, muls, adds, mem = self.batchnorm_layer_config(in_shape, s_in=s_in, s_out=s_out)
 
-                        self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, [in_shape])
+                        self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, config=[in_shape])
 
                     elif operation == 'Relu':
                         out_shape = self.modules[name]['shape_out']
@@ -1122,13 +1104,16 @@ class ModelFeatureMapsOnnx():
 
                         assert cin == cout, 'Input and output channels bust be identical in GlobalAveragePool Layer'
 
-                        folding_name = "Mem_Bw({}/{}) - f_Fine({:.2f})".format(s_in, s_out, fine)
-
                         logging.warning("Fold = {}. Channels In = {} - Filters = {}".format(folding_name, cin, cout))
 
-                        rate_in, rate_out, muls, adds, mem, depth = self.gap_layer_config(in_shape, s_in=s_in, s_out=s_out)
+                        gap_config = [1, (cin)//16, (cin)//12, (cin)//8, (cin)//4]
 
-                        self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, [in_shape])
+                        for gap_coarse in gap_config:
+                            rate_in, rate_out, muls, adds, mem, depth, (mem_bounded_in, mem_bounded_out) = self.gap_layer_config(in_shape, coarse=gap_coarse, s_in=s_in, s_out=s_out)
+
+                            folding_name = "Coarse({:.2f}) - Mem_Bw({}/{})".format(gap_coarse, s_in, s_out)
+
+                            self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, mem_bounded_out=mem_bounded_out, config=[in_shape, gap_coarse, int(mem_bounded_in), int(mem_bounded_out)])
 
                     elif operation == 'Swish':
                         out_shape = self.modules[name]['shape_out']
@@ -1168,51 +1153,56 @@ class ModelFeatureMapsOnnx():
 
                         self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem)
                     
-                    # csv_writer.writerow(["-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"])
+
+    def product_dict(self, **kwargs):
+        keys = kwargs.keys()
+        vals = kwargs.values()
+        for instance in itertools.product(*vals):
+            yield dict(zip(keys, instance))
 
     def get_rates(self, layer, config, bw_in, bw_total, bw_out):
         operation = layer.split("_")[0]
         tmp_thr_in, tmp_thr_out = 0, 0
         if operation == 'Conv':
-            rate_in, rate_out, muls, adds, mem, depth = self.conv_layer_config(config[0], config[1], config[2], config[3], config[4], config[5], config[6], config[7], s_in=bw_in, s_out=bw_out)
+            rate_in, rate_out, muls, adds, mem, depth, mem_bounded = self.conv_layer_config(config[0], config[1], config[2], config[3], config[4], config[5], config[6], config[7], s_in=bw_in, s_out=bw_out)
             tmp_thr_in = (self.cycles_per_sec*rate_in)/int(np.prod(np.array(config[0][1:])))
             tmp_thr_out = (self.cycles_per_sec*rate_out)/int(np.prod(np.array(config[1][1:])))
-            # print("{} throughput = {}".format(operation, tmp_thr_out))
+            # logging.info("{} throughput = {}".format(operation, tmp_thr_out))
             assert math.isclose(tmp_thr_in, tmp_thr_out), "Input and Output Throughputs doesnt match on CONV operation. Aborting..."
         elif operation == 'Se':
-            rate_in, rate_out, muls, adds, mem, depth = self.se_layer_config(config[0], config[1], config[2], config[3], config[4], config[5], config[6], config[7], config[8], config[9], config[10], config[11], config[12], config[13], config[14], config[15], config[16], bw_in=bw_in, bw_total=bw_total, se_on_bram=config[17])
+            rate_in, rate_out, muls, adds, mem, depth, mem_bounded = self.se_layer_config(config[0], config[1], config[2], config[3], config[4], config[5], config[6], config[7], config[8], config[9], config[10], config[11], config[12], config[13], config[14], config[15], config[16], config[17], bw_in=bw_in, bw_total=bw_total, se_on_bram=config[18])
             tmp_thr_in = (self.cycles_per_sec*rate_in)/int(np.prod(np.array(config[0][1:])))
             tmp_thr_out = (self.cycles_per_sec*rate_out)/int(np.prod(np.array(config[0][1:])))
-            # if not left_branch_limit:
-            #     tmp_thr_out = (self.cycles_per_sec*rate_out)/int(np.prod(np.array(config[10][1:])))
-            # tmp_thr_out = (self.cycles_per_sec*rate_out)/int(np.prod(np.array(config[10][1:])))
-            # print("{} throughput = {}".format(operation, tmp_thr_out))
+            # logging.info("{} throughput = {}".format(operation, tmp_thr_out))
             assert math.isclose(tmp_thr_in, tmp_thr_out), "Input and Output Throughputs doesnt match on SE operation. Aborting..."
         elif operation == 'GlobalAveragePool':
-            rate_in, rate_out, muls, adds, mem, depth = self.gap_layer_config(config[0], s_in=bw_in)
+            rate_in, rate_out, muls, adds, mem, depth, mem_bounded = self.gap_layer_config(config[0], coarse=config[1], s_in=bw_in)
+            tmp_thr_in = (self.cycles_per_sec*rate_in)/int(np.prod(np.array(config[0][1:])))
+            tmp_thr_out = (self.cycles_per_sec*rate_out)/int(np.prod(np.array(config[0][1])))
+            assert math.isclose(tmp_thr_in, tmp_thr_out), "Input and Output Throughputs doesnt match on GlobalAveragePool operation. Aborting..."
         elif operation == 'Relu':
             rate_in, rate_out, muls, adds, mem = self.relu_layer_config(s_in=bw_in)
-            assert math.isclose(rate_in, rate_out), "Input and Output Rates doesnt match on {} operation. Aborting...".format(operation)
+            assert math.isclose(rate_in, rate_out), "Input and Output Rates doesnt match on ReLu operation. Aborting..."
             depth = 1
         elif operation == 'BatchNormalization':
             rate_in, rate_out, muls, adds, mem = self.batchnorm_layer_config(config[0], s_in=bw_in)
-            assert math.isclose(rate_in, rate_out), "Input and Output Rates doesnt match on {} operation. Aborting...".format(operation)
+            assert math.isclose(rate_in, rate_out), "Input and Output Rates doesnt match on BatchNormalization operation. Aborting..."
             depth = 1
         elif operation == 'Swish':
             rate_in, rate_out, muls, adds, mem = self.swish_layer_config(s_in=bw_in)
-            assert math.isclose(rate_in, rate_out), "Input and Output Rates doesnt match on {} operation. Aborting...".format(operation)
+            assert math.isclose(rate_in, rate_out), "Input and Output Rates doesnt match on Swish operation. Aborting..."
             depth = 1
         elif operation == 'Sigmoid':
             rate_in, rate_out, muls, adds, mem = self.sigmoid_layer_config(s_in=bw_in)
-            assert math.isclose(rate_in, rate_out), "Input and Output Rates doesnt match on {} operation. Aborting...".format(operation)
+            assert math.isclose(rate_in, rate_out), "Input and Output Rates doesnt match on Sigmoid operation. Aborting..."
             depth = 1
         elif operation == 'Add':
             rate_in, rate_out, muls, adds, mem = self.add_layer_config(s_in=bw_in)
-            assert math.isclose(rate_in, rate_out), "Input and Output Rates doesnt match on {} operation. Aborting...".format(operation)
+            assert math.isclose(rate_in, rate_out), "Input and Output Rates doesnt match on Add operation. Aborting..."
             depth = 1
         elif operation == 'Mul':
             rate_in, rate_out, muls, adds, mem = self.mul_layer_config(s_in=bw_in)
-            assert math.isclose(rate_in, rate_out), "Input and Output Rates doesnt match on {} operation. Aborting...".format(operation)
+            assert math.isclose(rate_in, rate_out), "Input and Output Rates doesnt match on Mul operation. Aborting..."
             depth = 1
 
         return rate_in, rate_out, muls, adds, mem, depth, tmp_thr_in, tmp_thr_out
@@ -1253,6 +1243,91 @@ class ModelFeatureMapsOnnx():
         dsp_config = []
         bram_config = []
         throughput_config = []
+        
+        res = list(self.product_dict(**l_configs))
+        
+        for r in tqdm(res, leave=False):
+            layer_keys = list(r.keys())
+            layer_modules = len(layer_keys)
+
+            in_shape = self.modules[layer_keys[0]]['shape_in']
+            in_size = int(np.prod(np.array(in_shape[1:])))
+            out_shape = self.modules[layer_keys[-1]]['shape_out']
+            out_size = int(np.prod(np.array(out_shape[1:])))
+
+            total_depth = 0
+            total_mem = 0
+            total_muls = 0
+            total_adds = 0
+
+            rates_graph = np.zeros( shape=(layer_modules,layer_modules+1) , dtype=float )
+            for i, k in enumerate(layer_keys):
+                branching = self.modules[k]['branching']
+
+                mod_rin, mod_rout, mod_muls, mod_adds, mod_mem, mod_depth, mod_thrin, mod_throut = self.get_rates(k, r[k][-1], 1, membw, 1)
+                
+                rates_graph[i,i] = mod_rin
+                rates_graph[i,i+1] = mod_rout
+
+                total_depth += mod_depth
+                total_mem += mod_mem
+                total_muls += mod_muls
+                total_adds += mod_adds
+
+            rates_graph_balanced = np.copy(rates_graph)
+            rates_graph_balanced = self.balance_module_rates(rates_graph_balanced)
+
+            rate_in = abs(rates_graph_balanced[0,0])
+            rate_out = abs(rates_graph_balanced[-1,-1])
+            thr_in = (self.cycles_per_sec*rate_in)/in_size
+            thr_out = (self.cycles_per_sec*rate_out)/out_size
+            assert math.isclose(thr_out, thr_in), "Input and Output Throughput doesnt match. Aborting..."
+
+            mem_kb = (total_mem*self.wb)/1e3
+            bram_util = math.ceil(mem_kb/(self.bram_mem/8))
+            bram_util = (bram_util/self.fpga_bram)*100
+
+            dsps_util = (total_muls/self.fpga_dsps)*100
+
+            if bram_util < 90.0:
+                bram_config.append("Below 90% BRAM")
+            else:
+                bram_config.append("Over 90% BRAM")
+            dsp_config.append(dsps_util)
+            # bram_config.append(bram_total)
+            throughput_config.append(thr_out)
+
+        if calculate_pareto:
+            scores = np.zeros((len(throughput_config), 2))
+            scores[:,0] = throughput_config
+            scores[:,1] = dsp_config
+            pareto = find_pareto(scores)
+            pareto_front = scores[pareto]
+
+            pareto_front_df = pd.DataFrame(pareto_front)
+            pareto_front_df.sort_values(0, inplace=True)
+            pareto_front = pareto_front_df.values
+
+            sns.lineplot(x=pareto_front[:, 0], y=pareto_front[:, 1], color='red')
+
+        sns.scatterplot(x=throughput_config, y=dsp_config, hue=bram_config, style=bram_config ,s=50)
+        plt.axhline(y=100, color='r', linestyle='-')
+        plt.axhline(y=90, color='r', linestyle='--')
+
+        # bram_tot = "{:.3f}".format(max(bram_config))
+        # plt.title(str(final_name) + " (" + bram_tot + " % BRAM Usage)")
+        plt.title(str(final_name))
+        plt.xlabel('Throughtput(outputs/sec)')
+        plt.xscale("log")
+        plt.ylabel('DSPS %')
+        plt.legend(frameon=False, prop={"size":8}, loc='upper right', bbox_to_anchor=(1.11, 1.12), borderaxespad=0.)
+        if not os.path.exists(os.path.join(os.getcwd(), 'fpga_modeling_reports', 'graphs', model_name, 'partition_layers')):
+            os.makedirs(os.path.join(os.getcwd(), 'fpga_modeling_reports', 'graphs', model_name, 'partition_layers'))
+        partitions_path = os.path.join(os.getcwd(), 'fpga_modeling_reports', 'graphs', model_name, 'partition_layers')
+        plt.savefig(os.path.join(partitions_path, str(final_name) + ".png"))
+        plt.clf()
+        
+        return
         if len(sizes) == 13:
             membw_config = [(membw*0.2, membw*0.2, membw*0.2, membw*0.2, membw*0.2), (membw*0.4, membw*0.3, membw*0.1, membw*0.1, membw*0.1), (membw*0.1, membw*0.4, membw*0.2, membw*0.1, membw*0.2), (membw*0.5, membw*0.2, membw*0.1, membw*0.1, membw*0.1), (membw*0.6, membw*0.1, membw*0.1, membw*0.1, membw*0.1)]
             with tqdm(total=int(np.prod(np.array(sizes)))) as pbar:
@@ -1870,7 +1945,7 @@ def find_pareto(scores):
     # Return ids of scenarios on pareto front
     return population_ids[pareto_front]
 
-def plot_graph(x, y, bram, leg, name, type, model_name, calculate_pareto):
+def plot_graph(x, y, bram, mem_compute_bounded, leg, name, type, model_name, calculate_pareto):
     se_layer = True if "Se" in name.split("_") else False
     sns.set(rc={'figure.figsize':(15,8)})
     sns.set_style("darkgrid", {"axes.facecolor": ".85"})
@@ -1897,7 +1972,7 @@ def plot_graph(x, y, bram, leg, name, type, model_name, calculate_pareto):
 
             sns.lineplot(x=pareto_front[:, 0], y=pareto_front[:, 1], color='red')
 
-        sns.scatterplot(x=np.array(x), y=np.array(y[0]), hue=bram, style=bram, s=75)
+        sns.scatterplot(x=np.array(x), y=np.array(y[0]), hue=bram, style=mem_compute_bounded, s=75)
 
         plt.title(name)
         plt.xlabel('Throughtput(outputs/sec)')
@@ -1920,15 +1995,15 @@ def plot_graph(x, y, bram, leg, name, type, model_name, calculate_pareto):
         plt.legend(frameon=False, prop={"size":8}, loc='upper right', bbox_to_anchor=(1.11, 1.12), borderaxespad=0.)
 
         if se_layer and calculate_pareto:
-            print(name)
+            logging.info(name)
             for l_i, l in enumerate(legd):
-                print("Config: {} -> Throughput: {}. DSPs: {}".format(l, pareto_front[l_i, 0], pareto_front[l_i, 1]))
+                logging.info("Config: {} -> Throughput: {}. DSPs: {}".format(l, pareto_front[l_i, 0], pareto_front[l_i, 1]))
         file_name = name.replace('.', '_') + '.jpg'
         plt.savefig(os.path.join(dsps_dir, file_name))
         plt.clf()
     elif type == 'Memory Bandwidth':
 
-        sns.scatterplot(x=np.array(x), y=np.array(y[0]), hue=bram, style=bram, s=75)
+        sns.scatterplot(x=np.array(x), y=np.array(y[0]), hue=bram, style=mem_compute_bounded, s=75)
 
         plt.title(name)
         plt.xlabel('Throughtput(outputs/sec)')
@@ -1942,7 +2017,7 @@ def plot_graph(x, y, bram, leg, name, type, model_name, calculate_pareto):
         plt.clf()
 
 
-        sns.scatterplot(x=np.array(x), y=np.array(y[1]), hue=bram, style=bram, s=75)
+        sns.scatterplot(x=np.array(x), y=np.array(y[1]), hue=bram, style=mem_compute_bounded, s=75)
 
         plt.title(name)
         plt.xlabel('Throughtput(outputs/sec)')
@@ -1967,6 +2042,7 @@ def performance_graphs(file_name="x3d_m", layers_to_plot=None, calculate_pareto=
         print(cols)
 
         bram = []
+        mem_compute_bounded = []
         folding = []
         dsp_util = []
         mem_bw_in = []
@@ -1990,17 +2066,31 @@ def performance_graphs(file_name="x3d_m", layers_to_plot=None, calculate_pareto=
                 else:
                     bram_status = "Below 90 % BRAM"
                 bram.append(bram_status)
+
+                bounded = ""
+                conf = json.loads(row[cols['Configuration']])
+                mem_bounded_in, mem_bounded_out = conf[-2], conf[-1]
+                if mem_bounded_in == 1 and mem_bounded_out == 1:
+                    bounded = "Memory Bounded (IN/OUT)"
+                elif mem_bounded_in == 1 and mem_bounded_out == 0:
+                    bounded = "Memory Bounded IN"
+                elif mem_bounded_in == 0 and mem_bounded_out == 1:
+                    bounded = "Memory Bounded OUT"
+                else:
+                    bounded = "Compute Bounded"
+                mem_compute_bounded.append(bounded)
+
                 folding.append(row[cols['Folding']])
                 dsp_util.append(float(row[cols['DSPS %']]))
                 mem_bw_in.append(float(row[cols['Memory Bandwidth In(GBs/sec)']]))
                 mem_bw_out.append(float(row[cols['Memory Bandwidth Out(GBs/sec)']]))
                 throughput.append(float(row[cols['Throughtput(outputs/sec)']]))
-                # throughput.append(float(row[cols['Throughtput(words/cycle)']]))
             else:
-                plot_graph(throughput, [dsp_util], bram, folding, prev_layer, 'DSPS', file_name, calculate_pareto=calculate_pareto)
-                plot_graph(throughput, [mem_bw_in, mem_bw_out], bram, folding, prev_layer, 'Memory Bandwidth', file_name, calculate_pareto=calculate_pareto)
+                plot_graph(throughput, [dsp_util], bram, mem_compute_bounded, folding, prev_layer, 'DSPS', file_name, calculate_pareto=calculate_pareto)
+                plot_graph(throughput, [mem_bw_in, mem_bw_out], bram, mem_compute_bounded, folding, prev_layer, 'Memory Bandwidth', file_name, calculate_pareto=calculate_pareto)
 
                 bram.clear()
+                mem_compute_bounded.clear()
                 folding.clear()
                 dsp_util.clear()
                 mem_bw_in.clear()
@@ -2013,17 +2103,30 @@ def performance_graphs(file_name="x3d_m", layers_to_plot=None, calculate_pareto=
                 else:
                     bram_status = "Below 90 % BRAM"
                 bram.append(bram_status)
+
+                bounded = ""
+                conf = json.loads(row[cols['Configuration']])
+                mem_bounded_in, mem_bounded_out = conf[-2], conf[-1]
+                if mem_bounded_in == 1 and mem_bounded_out == 1:
+                    bounded = "Memory Bounded (IN/OUT)"
+                elif mem_bounded_in == 1 and mem_bounded_out == 0:
+                    bounded = "Memory Bounded IN"
+                elif mem_bounded_in == 0 and mem_bounded_out == 1:
+                    bounded = "Memory Bounded OUT"
+                else:
+                    bounded = "Compute Bounded"
+                mem_compute_bounded.append(bounded)
+
                 folding.append(row[cols['Folding']])
                 dsp_util.append(float(row[cols['DSPS %']]))
                 mem_bw_in.append(float(row[cols['Memory Bandwidth In(GBs/sec)']]))
                 mem_bw_out.append(float(row[cols['Memory Bandwidth Out(GBs/sec)']]))
                 throughput.append(float(row[cols['Throughtput(outputs/sec)']]))
-                # throughput.append(float(row[cols['Throughtput(words/cycle)']]))
 
             prev_layer = row[cols['Layer']]
 
-        plot_graph(throughput, [dsp_util], bram, folding, prev_layer, 'DSPS', file_name, calculate_pareto=calculate_pareto)
-        plot_graph(throughput, [mem_bw_in, mem_bw_out], bram, folding, prev_layer, 'Memory Bandwidth', file_name, calculate_pareto=calculate_pareto)
+        plot_graph(throughput, [dsp_util], bram, mem_compute_bounded, folding, prev_layer, 'DSPS', file_name, calculate_pareto=calculate_pareto)
+        plot_graph(throughput, [mem_bw_in, mem_bw_out], bram, mem_compute_bounded, folding, prev_layer, 'Memory Bandwidth', file_name, calculate_pareto=calculate_pareto)
 
 def drop_duplicates(file_name="x3d_m", pareto=False):
     
@@ -2035,6 +2138,7 @@ def drop_duplicates(file_name="x3d_m", pareto=False):
     data = pd.read_csv(csv_file_read)
     columns = data.columns.tolist()
     del(columns[1])
+    del(columns[-1])
     del(columns[-1])
 
     data_droped = data.drop_duplicates(subset=columns)
@@ -2083,7 +2187,6 @@ def get_paretto(file_name="x3d_m"):
                     
                     for p in pareto:
                         csv_writer_par.writerow(rows[p])
-                    # csv_writer_par.writerow(["-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"])
                     rows.clear()
                     
                     rows.append(row)
@@ -2100,7 +2203,6 @@ def get_paretto(file_name="x3d_m"):
             
             for p in pareto:
                 csv_writer_par.writerow(rows[p])
-            # csv_writer_par.writerow(["-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"])
 
 def get_partition_layers(layers, model_name):
     final_layers = []
@@ -2150,7 +2252,8 @@ def parse_args():
 
 def main():
     args = parse_args()
-
+    fname = args.model_name + '_onnx'
+    fname_pareto = fname + "_pareto"
     # Target FPGA Zynq UltraScale+ MPSoC ZCU104. Assuming clock frequency of 100 MHz.
     # The actual BRAM size is 11 Mbits (1.375 MBytes). This divided by the 18 Kbits size of each BRAM gives a total of 624 BRAM units.
     # The ZCU104 has also 27 Mbits (3.375 MBytes) of URAM. This divided by the 288 Kbits size of each URAM gives a total of 96 URAM units.
@@ -2163,33 +2266,15 @@ def main():
 
     onnx_modeling.create_modules()
 
-    fname = args.model_name + '_onnx'
-    #TODO: Different mem bandwidth percentages will give different design points. This should be a parameter as well.
-    onnx_modeling.create_design_points(file_name=fname, s_in=onnx_modeling.max_words_per_cycle*0.5, s_out=onnx_modeling.max_words_per_cycle*0.5)
-    # onnx_modeling.create_design_points(file_name=fname, s_in=10000, s_out=10000)
+    # onnx_modeling.create_design_points(file_name=fname, s_in=onnx_modeling.max_words_per_cycle*0.5, s_out=onnx_modeling.max_words_per_cycle*0.5)
+    # drop_duplicates(file_name=fname, pareto=False)
+    # get_paretto(file_name=fname)
+    # drop_duplicates(file_name=fname, pareto=True)
 
-    drop_duplicates(file_name=fname, pareto=False)
-
-    get_paretto(file_name=fname)
-
-    drop_duplicates(file_name=fname, pareto=True)
-
-    #TODO: (URGENT) Take into consideration the buffering needed in branching or read again from the off-chip memory and reduce the bw in the individual layers.
     partition_layers = get_partition_layers(onnx_modeling.modules, args.model_name)
-
-    fname_pareto = fname + "_pareto"
-    
-    # args = list()
-    # for n, l in enumerate(partition_layers):
-    #     args.append((fname_pareto, l, n+1, fname,))
-    # with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-    #     for _ in executor.map(onnx_modeling.thread_helper, args):
-    #         pass
-
-    # for n, l in enumerate(partition_layers):
-    #     # if len(l) < 13:
-    #         print("Evaluating Layer {}/{}".format(n+1, len(partition_layers)))
-    #         onnx_modeling.compose_layers(fname_pareto, l, n+1, fname, args.calculate_pareto, onnx_modeling.max_words_per_cycle, branch_on_bram=False)
+    for n, l in enumerate(partition_layers):
+        print("Evaluating Layer {}/{}".format(n+1, len(partition_layers)))
+        onnx_modeling.compose_layers(fname_pareto, l, n+1, fname, args.calculate_pareto, onnx_modeling.max_words_per_cycle, branch_on_bram=False)
 
     # performance_graphs(file_name=fname, layers_to_plot=['Conv', 'Se', 'GlobalAveragePool'], calculate_pareto=args.calculate_pareto)
 
