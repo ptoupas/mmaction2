@@ -1262,6 +1262,7 @@ class ModelFeatureMapsOnnx():
             total_muls = 0
             total_adds = 0
 
+            #TODO: Add cases where branching stays on BRAM completely
             membw_config = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
             mem_on_chip_bw = 10000
             
