@@ -1280,7 +1280,7 @@ class ModelFeatureMapsOnnx():
                         mod_rin, mod_rout, mod_muls, mod_adds, mod_mem, mod_depth, mod_thrin, mod_throut = self.get_rates(k, r[k][-1], mem_bw_in, membw, mem_on_chip_bw)
                     else:
                         mod_rin, mod_rout, mod_muls, mod_adds, mod_mem, mod_depth, mod_thrin, mod_throut = self.get_rates(k, r[k][-1], prev_mod_rout, membw, mem_on_chip_bw)
-                    logging.error("Module -> {}. Rate in = {:.5f}. Rate out = {:.5f}. Throughput in = {:.5f}. Throughput out = {:.5f}".format(k, mod_rin, mod_rout, mod_thrin, mod_throut))
+                    # logging.error("Module -> {}. Rate in = {:.5f}. Rate out = {:.5f}. Throughput in = {:.5f}. Throughput out = {:.5f}".format(k, mod_rin, mod_rout, mod_thrin, mod_throut))
                     prev_mod_rout = mod_rout
 
                     rates_graph[i,i] = mod_rin
@@ -1992,7 +1992,7 @@ def find_pareto(scores):
     # Return ids of scenarios on pareto front
     return population_ids[pareto_front]
 
-def plot_graph(x, y, bram, mem_compute_bounded, leg, name, type, model_name, calculate_pareto):
+def plot_graph(x, y, bram_util, bram, mem_compute_bounded, leg, name, type, model_name, calculate_pareto):
     se_layer = True if "Se" in name.split("_") else False
     sns.set(rc={'figure.figsize':(15,8)})
     sns.set_style("darkgrid", {"axes.facecolor": ".85"})
@@ -2019,7 +2019,7 @@ def plot_graph(x, y, bram, mem_compute_bounded, leg, name, type, model_name, cal
 
             sns.lineplot(x=pareto_front[:, 0], y=pareto_front[:, 1], color='red')
 
-        sns.scatterplot(x=np.array(x), y=np.array(y[0]), hue=bram, style=mem_compute_bounded, s=75)
+        sns.scatterplot(x=np.array(x), y=np.array(y[0]), hue=bram, style=mem_compute_bounded, s=75) # , size=bram_util, alpha=0.5
 
         plt.title(name)
         plt.xlabel('Throughtput(outputs/sec)')
@@ -2050,7 +2050,7 @@ def plot_graph(x, y, bram, mem_compute_bounded, leg, name, type, model_name, cal
         plt.clf()
     elif type == 'Memory Bandwidth':
 
-        sns.scatterplot(x=np.array(x), y=np.array(y[0]), hue=bram, style=mem_compute_bounded, s=75)
+        sns.scatterplot(x=np.array(x), y=np.array(y[0]), hue=bram, style=mem_compute_bounded, s=75) # , size=bram_util, alpha=0.5
 
         plt.title(name)
         plt.xlabel('Throughtput(outputs/sec)')
@@ -2064,7 +2064,7 @@ def plot_graph(x, y, bram, mem_compute_bounded, leg, name, type, model_name, cal
         plt.clf()
 
 
-        sns.scatterplot(x=np.array(x), y=np.array(y[1]), hue=bram, style=mem_compute_bounded, s=75)
+        sns.scatterplot(x=np.array(x), y=np.array(y[1]), hue=bram, style=mem_compute_bounded, s=75) # , size=bram_util, alpha=0.5
 
         plt.title(name)
         plt.xlabel('Throughtput(outputs/sec)')
@@ -2089,6 +2089,7 @@ def performance_graphs(file_name="x3d_m", layers_to_plot=None, calculate_pareto=
         print(cols)
 
         bram = []
+        bram_util = []
         mem_compute_bounded = []
         folding = []
         dsp_util = []
@@ -2129,17 +2130,19 @@ def performance_graphs(file_name="x3d_m", layers_to_plot=None, calculate_pareto=
 
                 folding.append(row[cols['Folding']])
                 dsp_util.append(float(row[cols['DSPS %']]))
+                bram_util.append(float(row[cols['On-Chip Memory(BRAM %)']]))
                 mem_bw_in.append(float(row[cols['Memory Bandwidth In(GBs/sec)']]))
                 mem_bw_out.append(float(row[cols['Memory Bandwidth Out(GBs/sec)']]))
                 throughput.append(float(row[cols['Throughtput(outputs/sec)']]))
             else:
-                plot_graph(throughput, [dsp_util], bram, mem_compute_bounded, folding, prev_layer, 'DSPS', file_name, calculate_pareto=calculate_pareto)
-                plot_graph(throughput, [mem_bw_in, mem_bw_out], bram, mem_compute_bounded, folding, prev_layer, 'Memory Bandwidth', file_name, calculate_pareto=calculate_pareto)
+                plot_graph(throughput, [dsp_util], bram_util, bram, mem_compute_bounded, folding, prev_layer, 'DSPS', file_name, calculate_pareto=calculate_pareto)
+                plot_graph(throughput, [mem_bw_in, mem_bw_out], bram_util, bram, mem_compute_bounded, folding, prev_layer, 'Memory Bandwidth', file_name, calculate_pareto=calculate_pareto)
 
                 bram.clear()
                 mem_compute_bounded.clear()
                 folding.clear()
                 dsp_util.clear()
+                bram_util.clear()
                 mem_bw_in.clear()
                 mem_bw_out.clear()
                 throughput.clear()
@@ -2166,14 +2169,15 @@ def performance_graphs(file_name="x3d_m", layers_to_plot=None, calculate_pareto=
 
                 folding.append(row[cols['Folding']])
                 dsp_util.append(float(row[cols['DSPS %']]))
+                bram_util.append(float(row[cols['On-Chip Memory(BRAM %)']]))
                 mem_bw_in.append(float(row[cols['Memory Bandwidth In(GBs/sec)']]))
                 mem_bw_out.append(float(row[cols['Memory Bandwidth Out(GBs/sec)']]))
                 throughput.append(float(row[cols['Throughtput(outputs/sec)']]))
 
             prev_layer = row[cols['Layer']]
 
-        plot_graph(throughput, [dsp_util], bram, mem_compute_bounded, folding, prev_layer, 'DSPS', file_name, calculate_pareto=calculate_pareto)
-        plot_graph(throughput, [mem_bw_in, mem_bw_out], bram, mem_compute_bounded, folding, prev_layer, 'Memory Bandwidth', file_name, calculate_pareto=calculate_pareto)
+        plot_graph(throughput, [dsp_util], bram_util, bram, mem_compute_bounded, folding, prev_layer, 'DSPS', file_name, calculate_pareto=calculate_pareto)
+        plot_graph(throughput, [mem_bw_in, mem_bw_out], bram_util, bram, mem_compute_bounded, folding, prev_layer, 'Memory Bandwidth', file_name, calculate_pareto=calculate_pareto)
 
 def drop_duplicates(file_name="x3d_m", pareto=False):
     
