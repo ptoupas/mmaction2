@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="/docs/imgs/mmaction2_logo.png" width="500"/>
+  <img src="/resources/mmaction2_logo.png" width="500"/>
 </div>
 
 ## Introduction
@@ -20,12 +20,16 @@ It is a part of the [OpenMMLab](http://openmmlab.org/) project.
 The master branch works with **PyTorch 1.3+**.
 
 <div align="center">
-  <img src="/docs/imgs/mmaction2_overview.gif" width="450px"/><br>
+  <img src="/resources/mmaction2_overview.gif" width="450px"/><br>
     Action Recognition Results on Kinetics-400
 </div>
 <div align="center">
-  <img src="/docs/imgs/spatio-temporal-det.gif" width="800px"/><br>
+  <img src="/resources/spatio-temporal-det.gif" width="800px"/><br>
     Spatio-Temporal Action Detection Results on AVA-2.1
+</div>
+<div align="center">
+  <img src="https://user-images.githubusercontent.com/34324155/123989146-2ecae680-d9fb-11eb-916b-b9db5563a9e5.gif" width="500px"/><br>
+    Skeleton-base Action Recognition Results on NTU-RGB+D-120
 </div>
 
 ### Major Features
@@ -55,7 +59,7 @@ The master branch works with **PyTorch 1.3+**.
 
 ## Changelog
 
-v0.15.0 was released in 31/05/2021. Please refer to [changelog.md](docs/changelog.md) for details and release history.
+v0.16.0 was released in 01/07/2021. Please refer to [changelog.md](docs/changelog.md) for details and release history.
 
 ## Benchmark
 
@@ -96,7 +100,7 @@ Supported methods for Action Recognition:
 - ✅ [MultiModality: Audio](configs/recognition_audio/resnet/README.md) (ArXiv'2020)
 - ✅ [TANet](configs/recognition/tanet/README.md) (ArXiv'2020)
 - ✅ [TRN](configs/recognition/trn/README.md) (CVPR'2015)
-- ✅ [PoseC3D](configs/skeleton/posec3d/README.md) (ArXiv'2021)
+- ✅ [Timesformer](configs/recognition/timesformer/README.md) (ICML'2021)
 
 </details>
 
@@ -120,6 +124,15 @@ Supported methods for Spatial Temporal Action Detection:
 - ✅ [SlowOnly+Fast R-CNN](configs/detection/ava/README.md) (ICCV'2019)
 - ✅ [SlowFast+Fast R-CNN](configs/detection/ava/README.md) (ICCV'2019)
 - ✅ [Long-Term Feature Bank](configs/detection/lfb/README.md) (CVPR'2019)
+
+</details>
+
+Supported methods for Skeleton-based Action Recognition:
+
+<details open>
+<summary>(click to collapse)</summary>
+
+- ✅ [PoseC3D](configs/skeleton/posec3d/README.md) (ArXiv'2021)
 
 </details>
 

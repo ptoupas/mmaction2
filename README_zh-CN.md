@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="/docs/imgs/mmaction2_logo.png" width="500"/>
+  <img src="/resources/mmaction2_logo.png" width="500"/>
 </div>
 
 ## 简介
@@ -19,12 +19,16 @@ MMAction2 是一款基于 PyTorch 的视频理解开源工具箱，是 [OpenMMLa
 主分支代码目前支持 **PyTorch 1.3 以上**的版本
 
 <div align="center">
-  <img src="/docs/imgs/mmaction2_overview.gif" width="450px"/><br>
+  <img src="/resources/mmaction2_overview.gif" width="450px"/><br>
     Kinetics-400 上的动作识别
 </div>
 <div align="center">
-  <img src="/docs/imgs/spatio-temporal-det.gif" width="800px"/><br>
+  <img src="/resources/spatio-temporal-det.gif" width="800px"/><br>
     AVA-2.1 上的时空动作检测
+</div>
+<div align="center">
+  <img src="https://user-images.githubusercontent.com/34324155/123989146-2ecae680-d9fb-11eb-916b-b9db5563a9e5.gif" width="500px"/><br>
+    NTURGB+D-120 上的基于人体姿态的动作识别
 </div>
 
 ## 主要特性
@@ -49,7 +53,7 @@ MMAction2 是一款基于 PyTorch 的视频理解开源工具箱，是 [OpenMMLa
 
 ## 更新记录
 
-v0.15.0 版本已于 2021 年 5 月 31 日发布，可通过查阅 [更新日志](/docs/changelog.md) 了解更多细节以及发布历史
+v0.16.0 版本已于 2021 年 7 月 1 日发布，可通过查阅 [更新日志](/docs/changelog.md) 了解更多细节以及发布历史
 
 ## 基准测试
 
@@ -239,7 +243,7 @@ MMAction2 是一款由不同学校和公司共同贡献的开源项目。我们�
 扫描下方的二维码可关注 OpenMMLab 团队的 [知乎官方账号](https://www.zhihu.com/people/openmmlab)，加入 OpenMMLab 团队的 [官方交流 QQ 群](https://jq.qq.com/?_wv=1027&k=aCvMxdr3)
 
 <div align="center">
-<img src="/docs/imgs/zhihu_qrcode.jpg" height="400" />  <img src="/docs/imgs/qq_group_qrcode.jpg" height="400" />
+<img src="/resources/zhihu_qrcode.jpg" height="400" />  <img src="/resources/qq_group_qrcode.jpg" height="400" />
 </div>
 
 我们会在 OpenMMLab 社区为大家

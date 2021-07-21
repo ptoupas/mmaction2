@@ -1,12 +1,14 @@
 import random
 import warnings
 from collections.abc import Sequence
+from distutils.version import LooseVersion
 
 import mmcv
 import numpy as np
 from torch.nn.modules.utils import _pair
 
 from ..builder import PIPELINES
+from .formating import to_tensor
 
 
 def _combine_quadruple(a, b):
@@ -49,6 +51,115 @@ def _init_lazy_if_proper(results, lazy):
             results['lazy'] = lazyop
     else:
         assert 'lazy' not in results, 'Use Fuse after lazy operations'
+
+
+@PIPELINES.register_module()
+class TorchvisionTrans:
+    """Torchvision Augmentations, under torchvision.transforms.
+
+    Args:
+        type (str): The name of the torchvision transformation.
+    """
+
+    def __init__(self, type, **kwargs):
+        try:
+            import torchvision
+            import torchvision.transforms as tv_trans
+        except ImportError:
+            raise RuntimeError('Install torchvision to use TorchvisionTrans')
+        if LooseVersion(torchvision.__version__) < LooseVersion('0.8.0'):
+            raise RuntimeError('The version of torchvision should be at least '
+                               '0.8.0')
+
+        trans = getattr(tv_trans, type, None)
+        assert trans, f'Transform {type} not in torchvision'
+        self.trans = trans(**kwargs)
+
+    def __call__(self, results):
+        assert 'imgs' in results
+
+        imgs = [x.transpose(2, 0, 1) for x in results['imgs']]
+        imgs = to_tensor(np.stack(imgs))
+
+        imgs = self.trans(imgs).data.numpy()
+        imgs[imgs > 255] = 255
+        imgs[imgs < 0] = 0
+        imgs = imgs.astype(np.uint8)
+        imgs = [x.transpose(1, 2, 0) for x in imgs]
+        results['imgs'] = imgs
+        return results
+
+
+@PIPELINES.register_module()
+class PytorchVideoTrans:
+    """PytorchVideoTrans Augmentations, under pytorchvideo.transforms.
+
+    Args:
+        type (str): The name of the pytorchvideo transformation.
+    """
+
+    def __init__(self, type, **kwargs):
+        try:
+            import torch
+            import pytorchvideo.transforms as ptv_trans
+        except ImportError:
+            raise RuntimeError('Install pytorchvideo to use PytorchVideoTrans')
+        if LooseVersion(torch.__version__) < LooseVersion('1.8.0'):
+            raise RuntimeError(
+                'The version of PyTorch should be at least 1.8.0')
+
+        trans = getattr(ptv_trans, type, None)
+        assert trans, f'Transform {type} not in pytorchvideo'
+
+        supported_pytorchvideo_trans = ('AugMix', 'RandAugment',
+                                        'RandomResizedCrop', 'ShortSideScale',
+                                        'RandomShortSideScale')
+        assert type in supported_pytorchvideo_trans,\
+            f'PytorchVideo Transform {type} is not supported in MMAction2'
+
+        self.trans = trans(**kwargs)
+        self.type = type
+
+    def __call__(self, results):
+        assert 'imgs' in results
+
+        assert 'gt_bboxes' not in results,\
+            f'PytorchVideo {self.type} doesn\'t support bboxes yet.'
+        assert 'proposals' not in results,\
+            f'PytorchVideo {self.type} doesn\'t support bboxes yet.'
+
+        if self.type in ('AugMix', 'RandAugment'):
+            # list[ndarray(h, w, 3)] -> torch.tensor(t, c, h, w)
+            imgs = [x.transpose(2, 0, 1) for x in results['imgs']]
+            imgs = to_tensor(np.stack(imgs))
+        else:
+            # list[ndarray(h, w, 3)] -> torch.tensor(c, t, h, w)
+            # uint8 -> float32
+            imgs = to_tensor((np.stack(results['imgs']).transpose(3, 0, 1, 2) /
+                              255.).astype(np.float32))
+
+        imgs = self.trans(imgs).data.numpy()
+
+        if self.type in ('AugMix', 'RandAugment'):
+            imgs[imgs > 255] = 255
+            imgs[imgs < 0] = 0
+            imgs = imgs.astype(np.uint8)
+
+            # torch.tensor(t, c, h, w) -> list[ndarray(h, w, 3)]
+            imgs = [x.transpose(1, 2, 0) for x in imgs]
+        else:
+            # float32 -> uint8
+            imgs = imgs * 255
+            imgs[imgs > 255] = 255
+            imgs[imgs < 0] = 0
+            imgs = imgs.astype(np.uint8)
+
+            # torch.tensor(c, t, h, w) -> list[ndarray(h, w, 3)]
+            imgs = [x for x in imgs.transpose(1, 2, 3, 0)]
+
+        results['imgs'] = imgs
+
+        return results
 
 
 @PIPELINES.register_module()
@@ -152,35 +263,6 @@ class PoseCompact:
                     f'hw_ratio={self.hw_ratio}, '
                     f'allow_imgpad={self.allow_imgpad})')
         return repr_str
-
-
-class EntityBoxRescale:
-
-    def __init__(self, scale_factor):
-        raise NotImplementedError(
-            'This component should not be used in the '
-            'data pipeline and is removed in PR #782. Details see '
-            'https://github.com/open-mmlab/mmaction2/pull/782')
-
-
-@PIPELINES.register_module()
-class EntityBoxCrop:
-
-    def __init__(self, crop_bbox):
-        raise NotImplementedError(
-            'This component should not be used in the '
-            'data pipeline and is removed in PR #782. Details see '
-            'https://github.com/open-mmlab/mmaction2/pull/782')
-
-
-@PIPELINES.register_module()
-class EntityBoxFlip:
-
-    def __init__(self, img_shape):
-        raise NotImplementedError(
-            'This component should not be used in the '
-            'data pipeline and is removed in PR #782. Details see '
-            'https://github.com/open-mmlab/mmaction2/pull/782')
 
 
 @PIPELINES.register_module()
