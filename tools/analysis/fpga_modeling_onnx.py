@@ -22,8 +22,8 @@ from numpy.lib.function_base import append
 from numpy.testing._private.utils import assert_equal
 from functools import reduce
 
-coloredlogs.install(level='ERROR')
-logging.basicConfig(level=logging.ERROR)
+coloredlogs.install(level='WARNING')
+logging.basicConfig(level=logging.WARNING)
 np.set_printoptions(precision=5, suppress=True, linewidth=150)
 
 
@@ -1289,7 +1289,6 @@ class ModelFeatureMapsOnnx():
                                 mod_rin, mod_rout, mod_muls, mod_adds, mod_mem, mod_depth, mod_thrin, mod_throut = self.get_rates(k, r[k][-1], mem_on_chip_bw, membw, mem_on_chip_bw)
                         else:
                             mod_rin, mod_rout, mod_muls, mod_adds, mod_mem, mod_depth, mod_thrin, mod_throut = self.get_rates(k, r[k][-1], prev_mod_rout, membw, mem_on_chip_bw)
-                        # logging.error("Module -> {}. Rate in = {:.5f}. Rate out = {:.5f}. Throughput in = {:.5f}. Throughput out = {:.5f}".format(k, mod_rin, mod_rout, mod_thrin, mod_throut))
                         prev_mod_rout = mod_rout
 
                         rates_graph_list[rg_idx][i,i] = mod_rin
@@ -1447,6 +1446,31 @@ class ModelFeatureMapsOnnx():
             pareto_front = pareto_front_df.values
 
             sns.lineplot(x=pareto_front[:, 0], y=pareto_front[:, 1], color='red')
+
+        # Search the points in pareto front (per layer) with the maximum throughput and save them in a csv file.
+        model_name = file_name.split("onnx")[0]
+        csv_file = os.path.join(os.getcwd(), 'fpga_modeling_reports', model_name + 'max_throughput_design_points.csv')
+        max_throughput = 0
+        best_dsp = 0
+        best_bram = 0
+        best_bw_stat = "Unknown"
+        for thr, dsp, bram, bw_stat in zip(throughput_config, dsp_config, bram_total_util, mem_bw_status):
+            if thr > max_throughput and dsp < 90.0 and bram < 90.0:
+                max_throughput = thr
+                best_dsp = dsp
+                best_bram = bram
+                best_bw_stat = bw_stat
+            if thr == max_throughput:
+                if (dsp < best_dsp and bram <= best_bram) or (dsp <= best_dsp and bram < best_bram):
+                    best_dsp = dsp
+                    best_bram = bram
+                    best_bw_stat = bw_stat
+        with open(csv_file, mode='a') as model_results:
+            csv_writer = csv.writer(model_results, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+            if final_name == 1:
+                csv_writer.writerow(['Layer Name', 'Throughput', 'DSPs(%)', 'BRAM(%)', 'Memory BW Status'])
+            csv_writer.writerow([final_name, max_throughput, best_dsp, best_bram, best_bw_stat])
+        logging.warning("Best config for layer {}. Throughput = {:.5f}, DSPs(%) = {:.5f}, BRAM(%) = {:.5f}, Mem BW = {}".format(final_name, max_throughput, best_dsp, best_bram, best_bw_stat))
 
         sns.scatterplot(x=throughput_config, y=dsp_config, hue=bram_config, style=mem_bw_status, alpha=.5, size=bram_total_util)
         plt.axhline(y=100, color='r', linestyle='-')
@@ -1799,6 +1823,7 @@ def main():
     args = parse_args()
     fname = args.model_name + '_onnx'
     fname_pareto = fname + "_pareto"
+
     # Target FPGA Zynq UltraScale+ MPSoC ZCU104. Assuming clock frequency of 100 MHz.
     # The actual BRAM size is 11 Mbits (1.375 MBytes). This divided by the 18 Kbits size of each BRAM gives a total of 624 BRAM units.
     # The ZCU104 has also 27 Mbits (3.375 MBytes) of URAM. This divided by the 288 Kbits size of each URAM gives a total of 96 URAM units.
