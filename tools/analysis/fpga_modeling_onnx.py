@@ -22,8 +22,8 @@ from numpy.lib.function_base import append
 from numpy.testing._private.utils import assert_equal
 from functools import reduce
 
-coloredlogs.install(level='WARNING')
-logging.basicConfig(level=logging.WARNING)
+coloredlogs.install(level='INFO')
+logging.basicConfig(level=logging.INFO)
 np.set_printoptions(precision=5, suppress=True, linewidth=150)
 
 
@@ -1238,6 +1238,7 @@ class ModelFeatureMapsOnnx():
             keys.append(k)
         
         dsp_config = []
+        depth_config = []
         bram_config = []
         bram_total_util = []
         mem_bw_status = []
@@ -1430,6 +1431,7 @@ class ModelFeatureMapsOnnx():
                     mem_bw_status.append("Memory Bounded OUT")
                 else:
                     mem_bw_status.append("Compute Bounded")
+                depth_config.append(total_depth)
                 dsp_config.append(dsps_util)
                 bram_total_util.append(bram_util)
                 throughput_config.append(thr_out)
@@ -1453,24 +1455,28 @@ class ModelFeatureMapsOnnx():
         max_throughput = 0
         best_dsp = 0
         best_bram = 0
+        best_depth = 0
         best_bw_stat = "Unknown"
-        for thr, dsp, bram, bw_stat in zip(throughput_config, dsp_config, bram_total_util, mem_bw_status):
+        for thr, dsp, bram, bw_stat, p_depth in zip(throughput_config, dsp_config, bram_total_util, mem_bw_status, depth_config):
             if thr > max_throughput and dsp < 90.0 and bram < 90.0:
                 max_throughput = thr
                 best_dsp = dsp
                 best_bram = bram
+                best_depth = p_depth
                 best_bw_stat = bw_stat
             if thr == max_throughput:
                 if (dsp < best_dsp and bram <= best_bram) or (dsp <= best_dsp and bram < best_bram):
                     best_dsp = dsp
                     best_bram = bram
+                    best_depth = p_depth
                     best_bw_stat = bw_stat
         with open(csv_file, mode='a') as model_results:
             csv_writer = csv.writer(model_results, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
             if final_name == 1:
-                csv_writer.writerow(['Layer Name', 'Throughput', 'DSPs(%)', 'BRAM(%)', 'Memory BW Status'])
-            csv_writer.writerow([final_name, max_throughput, best_dsp, best_bram, best_bw_stat])
-        logging.warning("Best config for layer {}. Throughput = {:.5f}, DSPs(%) = {:.5f}, BRAM(%) = {:.5f}, Mem BW = {}".format(final_name, max_throughput, best_dsp, best_bram, best_bw_stat))
+                csv_writer.writerow(['Layer Name', 'Iteration Interval', 'Throughput(outputs/sec)', 'Latency(sec)', 'DSPs(%)', 'BRAM(%)', 'Memory BW Status', 'Pipeline Depth'])
+            ii = math.ceil(1/(max_throughput/self.cycles_per_sec))
+            csv_writer.writerow([final_name, ii, max_throughput, 1/max_throughput, best_dsp, best_bram, best_bw_stat, best_depth])
+        logging.warning("Best config for layer {}. Iteration Interval = {}, Throughput = {:.5f}, Latency = {:.5f}, DSPs(%) = {:.5f}, BRAM(%) = {:.5f}, Mem BW = {}, Pipeline Depth = {}".format(final_name, ii, max_throughput, 1/max_throughput, best_dsp, best_bram, best_bw_stat, best_depth))
 
         sns.scatterplot(x=throughput_config, y=dsp_config, hue=bram_config, style=mem_bw_status, alpha=.5, size=bram_total_util)
         plt.axhline(y=100, color='r', linestyle='-')
