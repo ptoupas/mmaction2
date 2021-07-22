@@ -1321,7 +1321,7 @@ class ModelFeatureMapsOnnx():
                     elif i_r > 0 and branch_on_bram:
                         branch_mem_bw = mem_on_chip_bw
                     elif i_r > 0 and not branch_on_bram:
-                        branch_mem_bw = mem_bw_in
+                        branch_mem_bw = membw - rates_graph_list[i_r-1][0,0] - rates_graph_list[i_r-1][-1,-1]
 
                     if branch_mem_bw < rate_graph[0,0]:
                         in_module_ratio = rate_graph[0,1] / rate_graph[0,0]
@@ -1450,8 +1450,8 @@ class ModelFeatureMapsOnnx():
             sns.lineplot(x=pareto_front[:, 0], y=pareto_front[:, 1], color='red')
 
         # Search the points in pareto front (per layer) with the maximum throughput and save them in a csv file.
-        model_name = file_name.split("onnx")[0]
-        csv_file = os.path.join(os.getcwd(), 'fpga_modeling_reports', model_name + 'max_throughput_design_points.csv')
+        model_name_ = file_name.split("onnx")[0]
+        csv_file = os.path.join(os.getcwd(), 'fpga_modeling_reports', model_name_ + 'max_throughput_design_points.csv')
         max_throughput = 0
         best_dsp = 0
         best_bram = 0
