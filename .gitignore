@@ -133,6 +133,13 @@ work_dirs/
 mmaction/configs/*
 mmaction/tools/*
 
+*.ipynb
+
+# unignore ipython notebook files in demo
+!demo/*.ipynb
+mmaction/.mim
+
 fpga_modeling_reports/
 i3d.onnx
 x3d_m.onnx
+c3d.onnx
