@@ -30,6 +30,7 @@ np.set_printoptions(precision=5, suppress=True, linewidth=150)
 class ModelFeatureMapsOnnx():
 
     def __init__(self, model, word_length, clock_freq, bram, dsp, mem_bw):
+        self.model_name = model
         self.model_path = model + ".onnx"
         self.layers = {}
         self.modules = {}
@@ -163,7 +164,7 @@ class ModelFeatureMapsOnnx():
                 logging.info("Node ({}):\n{}".format(n.name, n.input))
                 
                 skip_layer = False
-                
+
                 layer_input_shape = []
                 layer_input_id = []
 
@@ -196,6 +197,15 @@ class ModelFeatureMapsOnnx():
                     first_layer = False
                 else:
                     for layer_in in n.input:
+                        skip_unsupported_layer = False
+                        if n.op_type =='MatMul' and self.model_name == 'x3d_m' and layer_in == '988':
+                            logging.warning('Workaround to support final FC layers in x3d_m model. This code is specificaly written for this model and won\'t work in other models')
+                            skip_unsupported_layer = True
+                            layer_in = '980'
+                        if n.op_type =='MatMul' and self.model_name == 'x3d_m' and layer_in == '989':
+                            logging.warning('Workaround to support final FC layers in x3d_m model. This code is specificaly written for this model and won\'t work in other models')
+                            layer_in = 'cls_head.fc1.weight'
+
                         exists, shape = self.is_in_inputs(layer_in)
                         if exists:
                             logging.info("VARIABLE INPUT {} - {}".format(layer_in, shape))
@@ -211,9 +221,13 @@ class ModelFeatureMapsOnnx():
                             if layer_in not in layers_outputs.keys():
                                 skip_layer = True
                                 break
-                            layer_input_shape.append(layers_outputs[layer_in])
+
+                            if skip_unsupported_layer:
+                                layer_input_shape.append(layers_outputs[layer_in][:2])
+                            else:
+                                layer_input_shape.append(layers_outputs[layer_in])
                             layer_input_id.append(layer_in)
-                            logging.info("INTERMEDIADE INPUT {} - {}".format(layer_in, layers_outputs[layer_in]))
+                            logging.info("INTERMEDIADE INPUT {} - {}".format(layer_in, layer_input_shape[-1]))
                 if skip_layer:
                     logging.warning("Could not find the input of layer {}. This layer will be skipped in the analysis".format(n.name))
                     continue
@@ -250,9 +264,16 @@ class ModelFeatureMapsOnnx():
                     inputs_curr = np.array(layer_input_shape)
                     shape_idx = np.argmax(np.prod(inputs_curr, axis=1))
                     out_shape = layer_input_shape[shape_idx].copy()
-                elif n.op_type == 'MatMul' or n.op_type == 'Gemm':
-                    logging.warning('Cannot connect with previous layers due to lack of support of some operations like squeeze, reshape etc.')
-                    continue
+                elif n.op_type == 'MatMul':
+                    if len(kernel) > 0:
+                        out_shape.append(layer_input_shape[0][0])
+                        out_shape.append(kernel[0])
+                    else:
+                        logging.warning('Case not supported yet. Skipping...')
+                        continue
+                elif n.op_type == 'Gemm':
+                    out_shape.append(layer_input_shape[0][0])
+                    out_shape.append(kernel[0])
                 else:
                     out_shape = layer_input_shape[0].copy()
                 
@@ -364,6 +385,35 @@ class ModelFeatureMapsOnnx():
         adds = 0
 
         return rate_in, rate_out, muls, adds, mem
+
+    def fc_layer_config(self, in_shape, out_shape, coarse_in, coarse_out, fine, s_in=1, s_out=1):
+        in_tensor_size = in_shape[1]
+        out_tensor_size = out_shape[1]
+
+        rate_in = 1 * coarse_in * coarse_out * fine
+        rate_out = (1 * coarse_out * fine)/(in_tensor_size/coarse_in)
+        mem = in_tensor_size * coarse_out
+        if coarse_in < in_tensor_size:
+            mem += coarse_out
+        muls = max(coarse_in * coarse_out * fine, 1)
+        adds = max(coarse_in * coarse_out * fine - 1, 1)
+
+        mem_bounded_in = False
+        if s_in < rate_in:
+            in_module_ratio = rate_out / rate_in
+            rate_in = s_in
+            rate_out = rate_in * in_module_ratio
+            assert math.isclose(in_module_ratio, rate_out / rate_in), "wrong calculation of ratio"
+            mem_bounded_in = True 
+
+        mem_bounded_out = False
+        if s_out < rate_out:
+            mem_bounded_out = True
+            rate_out = s_out
+        
+        depth = in_tensor_size
+        
+        return rate_in, rate_out, muls, adds, mem, depth, (mem_bounded_in, mem_bounded_out)
 
     def conv_layer_config(self, in_shape, out_shape, kernel_shape, padding, groups, fine, coarse_in, coarse_out, s_in=1, s_out=1):
 
@@ -582,7 +632,7 @@ class ModelFeatureMapsOnnx():
         for k in self.layers.keys():
             curr_output_id = int(self.layers[k]['output_id'])
             if not prev_output_id == -1:
-                assert curr_output_id == prev_output_id + 1, "Modules are not in the correct order. Revise the graph creation"
+                assert curr_output_id >= prev_output_id + 1, "Modules are not in the correct order. Revise the graph creation"
             prev_output_id = curr_output_id
         
             name = k
@@ -601,7 +651,7 @@ class ModelFeatureMapsOnnx():
                 oldest_input = int(in1_layer['output_id']) if in1_layer is not None else int(self.layers[k]['output_id'])
                 logging.info("Layer name = {} ({}). Input = {} ({})".format(name, self.layers[k]['output_id'], in1_layer_name, self.layers[k]['input_id'][0]))
             #TODO: Should find a more generic way to detect and filter branching behaviours on networks.
-            if int(self.layers[k]['output_id']) - oldest_input > 2:
+            if int(self.layers[k]['output_id']) - oldest_input > 2 and not (operation == 'MatMul' and self.model_name == 'x3d_m'):
                 branching = True
                 logging.info("Identified a branching behaviour on layer {}".format(name))
 
@@ -883,7 +933,7 @@ class ModelFeatureMapsOnnx():
                     operation = self.modules[k]['operation']
                     logging.warning("Layer: {} -> Operation: {}.".format(name, operation))
 
-                    # if not operation == 'Conv' and not operation == 'SqueezeExcitation':
+                    # if not (operation == 'MatMul' or operation == 'Gemm'):
                     #     continue
                     if operation == 'Conv':
                         out_shape = self.modules[name]['shape_out']
@@ -1151,7 +1201,89 @@ class ModelFeatureMapsOnnx():
                         rate_in, rate_out, muls, adds, mem = self.add_layer_config(s_in=s_in, s_out=s_out)
 
                         self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem)
-                    
+
+                    elif operation == 'Gemm' or operation == 'MatMul':
+                        '''
+                            The code below assumes the implementation of the fully connected layer as a 1x1 convolution with number of channels
+                            equal to the size of the input tensor and number of filters equal to the size of the output tensor.
+                        '''
+                        '''
+                        in_shape = self.modules[name]['shape_in'].copy()
+                        in_shape.extend([1, 1, 1])
+                        out_shape = self.modules[name]['shape_out'].copy()
+                        out_shape.extend([1, 1, 1])
+                        kernel_shape = self.modules[name]['kernel'].copy()
+                        kernel_shape.extend([1, 1, 1])
+                        padding = [0, 0, 0]
+                        groups = 1
+                        
+                        in_size = in_shape[0] * in_shape[1]
+                        out_size = out_shape[0] * out_shape[1]
+
+                        coarse_in_fc = kernel_shape[1]
+                        coarse_out_fc = kernel_shape[0]
+
+                        coarse_in_config = [1, coarse_in_fc//4, coarse_in_fc//2, coarse_in_fc]
+                        coarse_in_config = np.unique(coarse_in_config)
+                        coarse_in_config = coarse_in_config[np.nonzero(coarse_in_config)].tolist()
+
+                        coarse_out_config = [1, coarse_out_fc//4, coarse_out_fc//2, coarse_out_fc]
+                        coarse_out_config = np.unique(coarse_out_config)
+                        coarse_out_config = coarse_out_config[np.nonzero(coarse_out_config)].tolist()
+
+                        fine_config = [0.5, 1]
+
+                        mem_bw_config = [((s_in+s_out)*0.25, (s_in+s_out)*0.75), ((s_in+s_out)*0.50, (s_in+s_out)*0.50), ((s_in+s_out)*0.75, (s_in+s_out)*0.25)]
+                        for coarse_in in coarse_in_config:
+                            for coarse_out in coarse_out_config:
+                                for fine in fine_config:
+                                    for conv_bw_in, conv_bw_out in mem_bw_config:
+                                        coarse_in_name = str(coarse_in)
+                                        coarse_out_name = str(coarse_out)
+                                        folding_name = "N_Coarse({}/{}) - f_Fine({:.2f}) - Mem BW({:.2f}/{:.2f})".format(coarse_in_name, coarse_out_name, fine, conv_bw_in, conv_bw_out)
+
+                                        logging.info("Fold = {}. Channels In = {} - Filters = {}".format(folding_name, coarse_in_fc, coarse_out_fc))
+
+                                        rate_in, rate_out, muls, adds, mem, depth, (mem_bounded_in, mem_bounded_out) = self.conv_layer_config(in_shape, out_shape, kernel_shape, padding, groups, fine, coarse_in, coarse_out, s_in=conv_bw_in, s_out=conv_bw_out)
+
+                                        current_config = [in_shape, out_shape, kernel_shape, padding, groups, fine, coarse_in, coarse_out, int(mem_bounded_in), int(mem_bounded_out)]
+                                        self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, mem_bounded_out=mem_bounded_out, config=current_config)
+                        '''
+                        '''
+                            The code below models the fully connected layer as general matrix multiplication operation.
+                        '''
+                        in_shape = self.modules[name]['shape_in'].copy()
+                        out_shape = self.modules[name]['shape_out'].copy()
+                        kernel_shape = self.modules[name]['kernel'].copy()
+
+                        # Here we pass the kernel size as in_size since we are streaming the kernel weights instead of the input tensor of the fully connected layer.
+                        in_size = kernel_shape[0] * kernel_shape[1]
+                        out_size = out_shape[0] * out_shape[1]
+
+                        coarse_in_fc = kernel_shape[1]
+                        coarse_out_fc = kernel_shape[0]
+
+                        coarse_in_config = [1, coarse_in_fc//16, coarse_in_fc//12, coarse_in_fc//8, coarse_in_fc//4, coarse_in_fc]
+                        coarse_in_config = np.unique(coarse_in_config)
+                        coarse_in_config = coarse_in_config[np.nonzero(coarse_in_config)].tolist()
+
+                        coarse_out_config = [1, coarse_out_fc//16, coarse_out_fc//12, coarse_out_fc//8, coarse_out_fc//4, coarse_out_fc]
+                        coarse_out_config = np.unique(coarse_out_config)
+                        coarse_out_config = coarse_out_config[np.nonzero(coarse_out_config)].tolist()
+
+                        fine_config = [0.25, 0.5, 0.75, 1]
+
+                        mem_bw_config = [((s_in+s_out)*0.25, (s_in+s_out)*0.75), ((s_in+s_out)*0.50, (s_in+s_out)*0.50), ((s_in+s_out)*0.75, (s_in+s_out)*0.25)]
+                        for coarse_in in coarse_in_config:
+                            for coarse_out in coarse_out_config:
+                                for fine in fine_config:
+                                    for fc_bw_in, fc_bw_out in mem_bw_config:
+                                        folding_name = "N_Coarse({}/{}) - f_Fine({:.2f}) - Mem BW({:.2f}/{:.2f})".format(coarse_in, coarse_out, fine, fc_bw_in, fc_bw_out)
+                                        logging.info("Fold = {}. Tensor In = {} - Tensor Out = {}".format(folding_name, coarse_in_fc, coarse_out_fc))
+
+                                        rate_in, rate_out, muls, adds, mem, depth, (mem_bounded_in, mem_bounded_out) = self.fc_layer_config(in_shape, out_shape, coarse_in, coarse_out, fine, s_in=s_in, s_out=s_out)
+
+                                        self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, mem_bounded_out=mem_bounded_out, config=[in_shape, out_shape, coarse_in, coarse_out, fine, int(mem_bounded_in), int(mem_bounded_out)])
 
     def product_dict(self, **kwargs):
         keys = kwargs.keys()
@@ -1166,17 +1298,27 @@ class ModelFeatureMapsOnnx():
             rate_in, rate_out, muls, adds, mem, depth, (mem_bounded_in, mem_bounded_out) = self.conv_layer_config(config[0], config[1], config[2], config[3], config[4], config[5], config[6], config[7], s_in=bw_in, s_out=bw_out)
             tmp_thr_in = (self.cycles_per_sec*rate_in)/int(np.prod(np.array(config[0][1:])))
             tmp_thr_out = (self.cycles_per_sec*rate_out)/int(np.prod(np.array(config[1][1:])))
-            assert math.isclose(tmp_thr_in, tmp_thr_out), "Input and Output Throughputs doesnt match on CONV operation. Aborting..."
+            assert math.isclose(tmp_thr_in, tmp_thr_out) or mem_bounded_out, "Input and Output Throughputs doesnt match on CONV operation. Aborting..."
         elif operation == 'Se':
             rate_in, rate_out, muls, adds, mem, depth, (mem_bounded_in, mem_bounded_out) = self.se_layer_config(config[0], config[1], config[2], config[3], config[4], config[5], config[6], config[7], config[8], config[9], config[10], config[11], config[12], config[13], config[14], config[15], config[16], config[17], bw_in=bw_in, bw_total=bw_total, se_on_bram=config[18])
             tmp_thr_in = (self.cycles_per_sec*rate_in)/int(np.prod(np.array(config[0][1:])))
             tmp_thr_out = (self.cycles_per_sec*rate_out)/int(np.prod(np.array(config[0][1:])))
-            assert math.isclose(tmp_thr_in, tmp_thr_out), "Input and Output Throughputs doesnt match on SE operation. Aborting..."
+            assert math.isclose(tmp_thr_in, tmp_thr_out) or mem_bounded_out, "Input and Output Throughputs doesnt match on SE operation. Aborting..."
         elif operation == 'GlobalAveragePool':
-            rate_in, rate_out, muls, adds, mem, depth, (mem_bounded_in, mem_bounded_out) = self.gap_layer_config(config[0], coarse=config[1], s_in=bw_in)
+            rate_in, rate_out, muls, adds, mem, depth, (mem_bounded_in, mem_bounded_out) = self.gap_layer_config(config[0], coarse=config[1], s_in=bw_in, s_out=bw_out)
             tmp_thr_in = (self.cycles_per_sec*rate_in)/int(np.prod(np.array(config[0][1:])))
             tmp_thr_out = (self.cycles_per_sec*rate_out)/int(np.prod(np.array(config[0][1])))
-            assert math.isclose(tmp_thr_in, tmp_thr_out), "Input and Output Throughputs doesnt match on GlobalAveragePool operation. Aborting..."
+            assert math.isclose(tmp_thr_in, tmp_thr_out) or mem_bounded_out, "Input and Output Throughputs doesnt match on GlobalAveragePool operation. Aborting..."
+        elif operation == 'MatMul':
+            rate_in, rate_out, muls, adds, mem, depth, (mem_bounded_in, mem_bounded_out) = self.fc_layer_config(config[0], config[1], config[2], config[3], config[4], s_in=bw_in, s_out=bw_out)
+            tmp_thr_in = (self.cycles_per_sec*rate_in)/int(config[0][1]*config[1][1])
+            tmp_thr_out = (self.cycles_per_sec*rate_out)/int(config[1][1])
+            assert math.isclose(tmp_thr_in, tmp_thr_out) or mem_bounded_out, "Input and Output Throughputs doesnt match on MatMul operation. Aborting..."
+        elif operation == 'Gemm':
+            rate_in, rate_out, muls, adds, mem, depth, (mem_bounded_in, mem_bounded_out) = self.fc_layer_config(config[0], config[1], config[2], config[3], config[4], s_in=bw_in, s_out=bw_out)
+            tmp_thr_in = (self.cycles_per_sec*rate_in)/int(config[0][1]*config[1][1])
+            tmp_thr_out = (self.cycles_per_sec*rate_out)/int(config[1][1])
+            assert math.isclose(tmp_thr_in, tmp_thr_out) or mem_bounded_out, "Input and Output Throughputs doesnt match on Gemm operation. Aborting..."
         elif operation == 'Relu':
             rate_in, rate_out, muls, adds, mem = self.relu_layer_config(s_in=bw_in)
             assert math.isclose(rate_in, rate_out), "Input and Output Rates doesnt match on ReLu operation. Aborting..."
@@ -1204,6 +1346,128 @@ class ModelFeatureMapsOnnx():
 
         return rate_in, rate_out, muls, adds, mem, depth, tmp_thr_in, tmp_thr_out
 
+    def non_branching_layer(self, layer_keys, r, membw, dsp_config, depth_config, bram_config, bram_total_util, mem_bw_status, throughput_config):
+        #TODO: This is a hardcoded version of supporting the x3d_m classifier. Should be revised in the future for a more generic implementation.
+        classifier = False
+        if self.model_name == 'x3d_m' and layer_keys == ['Relu_407', 'Conv_408', 'BatchNormalization_409', 'Relu_410', 'GlobalAveragePool_411', 'MatMul_421', 'Relu_422', 'Gemm_423']:
+            classifier = True
+
+        in_shape = self.modules[layer_keys[0]]['shape_in']
+        in_size = int(np.prod(np.array(in_shape[1:])))
+        out_shape = self.modules[layer_keys[-1]]['shape_out']
+        out_size = int(np.prod(np.array(out_shape[1:])))
+
+        membw_config = [0.2*membw, 0.3*membw, 0.4*membw, 0.5*membw, 0.6*membw, 0.7*membw, 0.8*membw]
+        mem_on_chip_bw = 10000
+        fc_layers_count = 0
+        for l in layer_keys:
+            if 'MatMul' in l.split('_') or 'Gemm' in l.split('_'):
+                fc_layers_count += 1
+
+        for mem_bw_in in membw_config:
+            fc_layer_bw = (membw - mem_bw_in)/2
+            fc_layer_bw_split = fc_layer_bw/fc_layers_count
+
+            total_depth = 0
+            total_mem = 0
+            total_muls = 0
+            total_adds = 0
+            
+            rate_graph = np.zeros( shape=(len(layer_keys),len(layer_keys)+1) , dtype=float )
+            prev_mod_rout = 0
+            early_exit = False
+
+            for i, k in enumerate(layer_keys):
+                if i == 0:
+                    mod_rin, mod_rout, mod_muls, mod_adds, mod_mem, mod_depth, mod_thrin, mod_throut = self.get_rates(k, r[k][-1], mem_bw_in, membw, mem_on_chip_bw)
+                else:
+                    if 'MatMul' in k.split('_') or 'Gemm' in k.split('_'):
+                        mod_rin, mod_rout, mod_muls, mod_adds, mod_mem, mod_depth, mod_thrin, mod_throut = self.get_rates(k, r[k][-1], fc_layer_bw_split, membw, mem_on_chip_bw)
+                    else:
+                        mod_rin, mod_rout, mod_muls, mod_adds, mod_mem, mod_depth, mod_thrin, mod_throut = self.get_rates(k, r[k][-1], prev_mod_rout, membw, mem_on_chip_bw)
+                prev_mod_rout = mod_rout
+                
+                if classifier and k == 'MatMul_421':
+                    fc1_thr_in = mod_thrin
+                    fc1_thr_out = mod_throut
+                if classifier and k == 'Gemm_423':
+                    fc2_thr_in = mod_thrin
+                    fc2_thr_out = mod_throut
+
+                rate_graph[i,i] = mod_rin
+                rate_graph[i,i+1] = mod_rout
+
+                total_depth += mod_depth
+                total_mem += mod_mem
+                total_muls += mod_muls
+                total_adds += mod_adds
+
+                if "Se" in k:
+                    se_layer_key = k
+                    se_layer_bwin = mod_rin
+                    se_layer_bwout = mod_rout
+                if (total_muls/self.fpga_dsps)*100 > 100.0 or ((math.ceil(((total_mem*self.wb)/1e3)/(self.bram_mem/8)))/self.fpga_bram)*100 > 100.0:
+                    early_exit = True
+                    break
+            if early_exit:
+                continue
+            
+            if classifier:
+                rate_graph = rate_graph[:5,:6]
+                out_size = r['GlobalAveragePool_411'][-1][0][1]
+                
+            rate_graph = self.balance_module_rates(rate_graph)
+
+            mem_bounded_in = False
+            if mem_bw_in < rate_graph[0,0]:
+                in_module_ratio = rate_graph[0,1] / rate_graph[0,0]
+                rate_graph[0,0] = mem_bw_in
+                rate_graph[0,1] = rate_graph[0,0] * in_module_ratio
+                assert math.isclose(in_module_ratio, rate_graph[0,1] / rate_graph[0,0]), "wrong calculation of ratio" 
+                rate_graph = self.balance_module_rates(rate_graph)
+                mem_bounded_in = True
+
+            rate_in = abs(rate_graph[0,0])
+            rate_out = abs(rate_graph[-1,-1])
+            
+            mem_bw_left = membw - rate_in - fc_layer_bw
+            mem_bounded_out = False
+            if mem_bw_left < rate_out:
+                mem_bounded_out = True
+                rate_out = mem_bw_left
+            
+            thr_in = (self.cycles_per_sec*rate_in)/in_size
+            thr_out = (self.cycles_per_sec*rate_out)/out_size
+            if classifier:
+                thr_in = min(thr_in, fc1_thr_in, fc2_thr_in)
+                thr_out = min(thr_out, fc1_thr_out, fc2_thr_out)
+
+            assert math.isclose(thr_out, thr_in) or mem_bounded_out, "Input and Output Throughput doesnt match. Aborting..."
+
+            mem_kb = (total_mem*self.wb)/1e3
+            bram_util = math.ceil(mem_kb/(self.bram_mem/8))
+            bram_util = (bram_util/self.fpga_bram)*100
+
+            dsps_util = (total_muls/self.fpga_dsps)*100
+            
+            if bram_util < 90.0:
+                bram_config.append("Below 90% BRAM")
+            else:
+                bram_config.append("Over 90% BRAM")
+            
+            if mem_bounded_in and mem_bounded_out:
+                mem_bw_status.append("Memory Bounded (IN/OUT)")
+            elif mem_bounded_in and not mem_bounded_out:
+                mem_bw_status.append("Memory Bounded IN")
+            elif not mem_bounded_in and mem_bounded_out:
+                mem_bw_status.append("Memory Bounded OUT")
+            else:
+                mem_bw_status.append("Compute Bounded")
+            depth_config.append(total_depth)
+            dsp_config.append(dsps_util)
+            bram_total_util.append(bram_util)
+            throughput_config.append(thr_out)
+        
     def compose_layers(self, file_name, layers_names, final_name, model_name, calculate_pareto, membw, branch_on_bram):
         sns.set(rc={'figure.figsize':(15,8)})
         sns.set_style("darkgrid", {"axes.facecolor": ".85"})
@@ -1226,7 +1490,7 @@ class ModelFeatureMapsOnnx():
 
                     if row[cols['Layer']] == l:
                         # l_configs[l].append([row[cols['Folding']], row[cols['On-Chip Memory(BRAM %)']], row[cols['DSPS %']], row[cols['Consumption(inputs/sec)']], row[cols['Throughtput(outputs/sec)']], row[cols['Memory Bandwidth In(words/cycle)']], row[cols['Memory Bandwidth Out(words/cycle)']]])
-                        if l.split("_")[0] == 'Conv' or l.split("_")[0] == 'Se' or l.split("_")[0] == 'BatchNormalization':
+                        if l.split("_")[0] == 'Conv' or l.split("_")[0] == 'Se' or l.split("_")[0] == 'BatchNormalization' or l.split("_")[0] == 'GlobalAveragePool' or l.split("_")[0] == 'MatMul' or l.split("_")[0] == 'Gemm':
                             l_configs[l].append([row[cols['Folding']], json.loads(row[cols['Configuration']])])
                         else:
                             l_configs[l].append([row[cols['Folding']], row[cols['Configuration']]])
@@ -1253,6 +1517,9 @@ class ModelFeatureMapsOnnx():
             se_layer_bwout = 0
 
             branches_points = [i for i in range(len(layer_keys)) if self.modules[layer_keys[i]]['branching'] and not layer_keys[i].split("_")[0] == "Se"]
+            if len(branches_points) == 0:
+                self.non_branching_layer(layer_keys, r, membw, dsp_config, depth_config, bram_config, bram_total_util, mem_bw_status, throughput_config)
+                continue
 
             # in_shape = self.modules[layer_keys[0]]['shape_in']
             in_shape = self.modules[layer_keys[-1]]['shape_in']
@@ -1260,15 +1527,15 @@ class ModelFeatureMapsOnnx():
             out_shape = self.modules[layer_keys[-1]]['shape_out']
             out_size = int(np.prod(np.array(out_shape[1:])))
 
-            total_depth = 0
-            total_mem = 0
-            total_muls = 0
-            total_adds = 0
-
-            membw_config = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
+            membw_config = [0.2*membw, 0.3*membw, 0.4*membw, 0.5*membw, 0.6*membw, 0.7*membw, 0.8*membw]
             mem_on_chip_bw = 10000
             
             for mem_bw_in in membw_config:
+                total_depth = 0
+                total_mem = 0
+                total_muls = 0
+                total_adds = 0
+
                 rates_graph_list = []
                 bp_origin = branches_points[0]
                 rates_graph = np.zeros( shape=(bp_origin,bp_origin+1) , dtype=float )
@@ -1784,7 +2051,9 @@ def get_partition_layers(layers, model_name):
     if model_name == 'x3d_m':
         layer_type_1 = ['Relu', 'Conv', 'BatchNormalization', 'Relu', 'Conv', 'BatchNormalization', 'SqueezeExcitation', 'Swish', 'Conv', 'BatchNormalization', 'Conv', 'BatchNormalization', 'Add']
         layer_type_2 = ['Relu', 'Conv', 'BatchNormalization', 'Relu', 'Conv', 'BatchNormalization', 'SqueezeExcitation', 'Swish', 'Conv', 'BatchNormalization', 'Add']
-        layer_type_3 = ['Relu', 'Conv', 'BatchNormalization', 'Relu', 'Conv', 'BatchNormalization', 'Swish', 'Conv', 'BatchNormalization', 'Add']    
+        layer_type_3 = ['Relu', 'Conv', 'BatchNormalization', 'Relu', 'Conv', 'BatchNormalization', 'Swish', 'Conv', 'BatchNormalization', 'Add']
+        layer_type_4 = ['Conv', 'Conv', 'BatchNormalization']
+        layer_type_5 = ['Relu', 'Conv', 'BatchNormalization', 'Relu', 'GlobalAveragePool', 'MatMul', 'Relu', 'Gemm']
         layer_queue = deque(maxlen=13)
         layer_queue_operations = deque(maxlen=13)
         for k in layers.keys():
@@ -1796,6 +2065,10 @@ def get_partition_layers(layers, model_name):
                 final_layers.append(list(layer_queue)[:-2])
             if list(layer_queue_operations)[:-3] == layer_type_3:
                 final_layers.append(list(layer_queue)[:-3])
+            if list(layer_queue_operations)[:-10] == layer_type_4:
+                final_layers.append(list(layer_queue)[:-10])
+            if list(layer_queue_operations)[5:] == layer_type_5:
+                final_layers.append(list(layer_queue)[5:])
     elif model_name == 'i3d':
         layer_type_1 = ['Conv', 'BatchNormalization', 'Relu', 'Conv', 'BatchNormalization', 'Relu', 'Conv', 'BatchNormalization', 'Conv', 'BatchNormalization', 'Add']
         layer_type_2 = ['Relu', 'Conv', 'BatchNormalization', 'Relu', 'Conv', 'BatchNormalization', 'Relu', 'Conv', 'BatchNormalization', 'Add']
@@ -1830,10 +2103,19 @@ def main():
     fname = args.model_name + '_onnx'
     fname_pareto = fname + "_pareto"
 
+    '''
+        The ZCU102 has BRAM size equal to 32.1 Mbits (4,0125 MBytes). This divided by the 18 Kbits size of each BRAM gives a total of 1825 BRAM units.
+        The ZCU102 has 24 GTH gigabit transceivers (16.3 Gb/s or 2.03 GB/s) on the PL-size
+        The ZCU102 has a total of 2520 DSP slices
+    '''
+    '''
+        The ZCU104 has BRAM size equal to 11 Mbits (1.375 MBytes). This divided by the 18 Kbits size of each BRAM gives a total of 624 BRAM units.
+        The ZCU104 has also 27 Mbits (3.375 MBytes) of URAM. This divided by the 288 Kbits size of each URAM gives a total of 96 URAM units.
+        The ZCU104 has 20 GTH gigabit transceivers (16.3 Gb/s or 2.03 GB/s) on the PL-size
+        The ZCU102 has a total of 1728 DSP slices
+    '''
+
     # Target FPGA Zynq UltraScale+ MPSoC ZCU104. Assuming clock frequency of 100 MHz.
-    # The actual BRAM size is 11 Mbits (1.375 MBytes). This divided by the 18 Kbits size of each BRAM gives a total of 624 BRAM units.
-    # The ZCU104 has also 27 Mbits (3.375 MBytes) of URAM. This divided by the 288 Kbits size of each URAM gives a total of 96 URAM units.
-    # The ZCU104 has 20 GTH gigabit transceivers (16.3 Gb/s or 2.03 GB/s) on the PL-size
     onnx_modeling = ModelFeatureMapsOnnx(model=args.model_name, word_length=16, clock_freq=100, bram=624, dsp=1728, mem_bw=16.3)
 
     onnx_modeling.from_onnx()
@@ -1847,12 +2129,13 @@ def main():
     get_paretto(file_name=fname)
     drop_duplicates(file_name=fname, pareto=True)
 
-    # partition_layers = get_partition_layers(onnx_modeling.modules, args.model_name)
-    # for n, l in enumerate(partition_layers):
-    #     print("Evaluating Layer {}/{}".format(n+1, len(partition_layers)))
-    #     onnx_modeling.compose_layers(fname_pareto, l, n+1, fname, args.calculate_pareto, onnx_modeling.max_words_per_cycle, branch_on_bram=False)
+    partition_layers = get_partition_layers(onnx_modeling.modules, args.model_name)
+    for n, l in enumerate(partition_layers):
+        if len(l) == 8:
+            print("Evaluating Layer {}/{}".format(n+1, len(partition_layers)))
+            onnx_modeling.compose_layers(fname_pareto, l, n+1, fname, args.calculate_pareto, onnx_modeling.max_words_per_cycle, branch_on_bram=False)
 
-    # performance_graphs(file_name=fname, layers_to_plot=['Conv', 'Se', 'GlobalAveragePool'], calculate_pareto=args.calculate_pareto)
+    # performance_graphs(file_name=fname, layers_to_plot=['Conv', 'Se', 'GlobalAveragePool', 'MatMul', 'Gemm'], calculate_pareto=args.calculate_pareto)
 
 if __name__ == '__main__':
     main()
