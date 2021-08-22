@@ -1365,8 +1365,9 @@ class ModelFeatureMapsOnnx():
                 fc_layers_count += 1
 
         for mem_bw_in in membw_config:
-            fc_layer_bw = (membw - mem_bw_in)/2
-            fc_layer_bw_split = fc_layer_bw/fc_layers_count
+            if classifier:
+                fc_layer_bw = (membw - mem_bw_in)/2
+                fc_layer_bw_split = fc_layer_bw/fc_layers_count
 
             total_depth = 0
             total_mem = 0
@@ -1381,7 +1382,7 @@ class ModelFeatureMapsOnnx():
                 if i == 0:
                     mod_rin, mod_rout, mod_muls, mod_adds, mod_mem, mod_depth, mod_thrin, mod_throut = self.get_rates(k, r[k][-1], mem_bw_in, membw, mem_on_chip_bw)
                 else:
-                    if 'MatMul' in k.split('_') or 'Gemm' in k.split('_'):
+                    if classifier and ('MatMul' in k.split('_') or 'Gemm' in k.split('_')):
                         mod_rin, mod_rout, mod_muls, mod_adds, mod_mem, mod_depth, mod_thrin, mod_throut = self.get_rates(k, r[k][-1], fc_layer_bw_split, membw, mem_on_chip_bw)
                     else:
                         mod_rin, mod_rout, mod_muls, mod_adds, mod_mem, mod_depth, mod_thrin, mod_throut = self.get_rates(k, r[k][-1], prev_mod_rout, membw, mem_on_chip_bw)
@@ -1430,7 +1431,9 @@ class ModelFeatureMapsOnnx():
             rate_in = abs(rate_graph[0,0])
             rate_out = abs(rate_graph[-1,-1])
             
-            mem_bw_left = membw - rate_in - fc_layer_bw
+            mem_bw_left = membw - rate_in
+            if classifier:
+                mem_bw_left -= fc_layer_bw
             mem_bounded_out = False
             if mem_bw_left < rate_out:
                 mem_bounded_out = True
@@ -2124,10 +2127,10 @@ def main():
 
     onnx_modeling.create_modules()
 
-    onnx_modeling.create_design_points(file_name=fname, s_in=onnx_modeling.max_words_per_cycle*0.5, s_out=onnx_modeling.max_words_per_cycle*0.5)
-    drop_duplicates(file_name=fname, pareto=False)
-    get_paretto(file_name=fname)
-    drop_duplicates(file_name=fname, pareto=True)
+    # onnx_modeling.create_design_points(file_name=fname, s_in=onnx_modeling.max_words_per_cycle*0.5, s_out=onnx_modeling.max_words_per_cycle*0.5)
+    # drop_duplicates(file_name=fname, pareto=False)
+    # get_paretto(file_name=fname)
+    # drop_duplicates(file_name=fname, pareto=True)
 
     partition_layers = get_partition_layers(onnx_modeling.modules, args.model_name)
     for n, l in enumerate(partition_layers):
