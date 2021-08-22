@@ -2131,9 +2131,8 @@ def main():
 
     partition_layers = get_partition_layers(onnx_modeling.modules, args.model_name)
     for n, l in enumerate(partition_layers):
-        if len(l) == 8:
-            print("Evaluating Layer {}/{}".format(n+1, len(partition_layers)))
-            onnx_modeling.compose_layers(fname_pareto, l, n+1, fname, args.calculate_pareto, onnx_modeling.max_words_per_cycle, branch_on_bram=False)
+        print("Evaluating Layer {}/{}".format(n+1, len(partition_layers)))
+        onnx_modeling.compose_layers(fname_pareto, l, n+1, fname, args.calculate_pareto, onnx_modeling.max_words_per_cycle, branch_on_bram=False)
 
     # performance_graphs(file_name=fname, layers_to_plot=['Conv', 'Se', 'GlobalAveragePool', 'MatMul', 'Gemm'], calculate_pareto=args.calculate_pareto)
 
