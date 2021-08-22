@@ -17,7 +17,7 @@ train_pipeline = [
     dict(type='RandomResizedCrop'),
     dict(type='Resize', scale=(224, 224), keep_ratio=False),
     dict(type='Flip', flip_ratio=0.5),
-    dict(type='ColorJitter', color_space_aug=True),
+    dict(type='ColorJitter'),
     dict(type='Normalize', **img_norm_cfg),
     dict(type='FormatShape', input_format='NCHW'),
     dict(type='Collect', keys=['imgs', 'label'], meta_keys=[]),
@@ -57,7 +57,7 @@ test_pipeline = [
 data = dict(
     videos_per_gpu=8,
     workers_per_gpu=8,
-    test_dataloader=dict(videos_per_gpu=12),
+    test_dataloader=dict(videos_per_gpu=1),
     train=dict(
         type=dataset_type,
         ann_file=ann_file_train,
