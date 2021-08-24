@@ -294,8 +294,26 @@ class ModelFeatureMapsOnnx():
                                 "running_var": running_var,}
     
     def get_info(self):
+        file = open("fpga_modeling_reports/models_sizes/" + self.model_name + "_conv_sizes.txt", "w")
         for k in self.layers.keys():
             logging.info("Node ({}):\n{}".format(k, self.layers[k]))
+            
+            if "Conv" in k.split("_"):
+                ifmap_size = self.layers[k]['input'][0]
+                kernel_size = self.layers[k]['kernel']
+                bias_size = self.layers[k]['bias']
+
+                ifmap_size = np.prod(np.array(ifmap_size))
+                kernel_size = np.prod(np.array(kernel_size)) if not len(kernel_size) == 0 else 0
+                bias_size = np.prod(np.array(bias_size)) if not len(bias_size) == 0 else 0
+
+                ifmap_mem_footprint = ((ifmap_size * self.wl) / 8) / 1e6
+                kernel_mem_footprint = ((kernel_size * self.wl) / 8) / 1e6 if not kernel_size == 0 else 0
+                bias_mem_footprint = ((bias_size * self.wl) / 8) / 1e6 if not bias_size == 0 else 0
+
+                txt_line = "{:.5f},{:.5f}\n".format(ifmap_mem_footprint,kernel_mem_footprint+bias_mem_footprint)
+                file.write(txt_line)
+        file.close()
 
     def batchnorm_layer_config(self, in_shape, s_in=1, s_out=1):
         cin = in_shape[1]
@@ -2107,7 +2125,7 @@ def main():
     fname_pareto = fname + "_pareto"
 
     '''
-        The ZCU102 has BRAM size equal to 32.1 Mbits (4,0125 MBytes). This divided by the 18 Kbits size of each BRAM gives a total of 1825 BRAM units.
+        The ZCU102 has BRAM size equal to 32.1 Mbits (4.0125 MBytes). This divided by the 18 Kbits size of each BRAM gives a total of 1825 BRAM units.
         The ZCU102 has 24 GTH gigabit transceivers (16.3 Gb/s or 2.03 GB/s) on the PL-size
         The ZCU102 has a total of 2520 DSP slices
     '''
@@ -2127,15 +2145,15 @@ def main():
 
     onnx_modeling.create_modules()
 
-    # onnx_modeling.create_design_points(file_name=fname, s_in=onnx_modeling.max_words_per_cycle*0.5, s_out=onnx_modeling.max_words_per_cycle*0.5)
-    # drop_duplicates(file_name=fname, pareto=False)
-    # get_paretto(file_name=fname)
-    # drop_duplicates(file_name=fname, pareto=True)
+    onnx_modeling.create_design_points(file_name=fname, s_in=onnx_modeling.max_words_per_cycle*0.5, s_out=onnx_modeling.max_words_per_cycle*0.5)
+    drop_duplicates(file_name=fname, pareto=False)
+    get_paretto(file_name=fname)
+    drop_duplicates(file_name=fname, pareto=True)
 
-    partition_layers = get_partition_layers(onnx_modeling.modules, args.model_name)
-    for n, l in enumerate(partition_layers):
-        print("Evaluating Layer {}/{}".format(n+1, len(partition_layers)))
-        onnx_modeling.compose_layers(fname_pareto, l, n+1, fname, args.calculate_pareto, onnx_modeling.max_words_per_cycle, branch_on_bram=False)
+    # partition_layers = get_partition_layers(onnx_modeling.modules, args.model_name)
+    # for n, l in enumerate(partition_layers):
+    #     print("Evaluating Layer {}/{}".format(n+1, len(partition_layers)))
+    #     onnx_modeling.compose_layers(fname_pareto, l, n+1, fname, args.calculate_pareto, onnx_modeling.max_words_per_cycle, branch_on_bram=False)
 
     # performance_graphs(file_name=fname, layers_to_plot=['Conv', 'Se', 'GlobalAveragePool', 'MatMul', 'Gemm'], calculate_pareto=args.calculate_pareto)
 
