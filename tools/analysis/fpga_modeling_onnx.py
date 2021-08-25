@@ -110,7 +110,10 @@ class ModelFeatureMapsOnnx():
                         rate_graph[layer-j-1,layer-j-1] = -rate_graph[layer-j-1,layer-j]/rate_ratio[layer-j-1]
         return rate_graph
 
-    def get_shape_onnx(self, input):
+    def get_shape_onnx(self, input, is_initializer=False):
+        if is_initializer:
+            return list(input.dims)
+
         tensor_type = input.type.tensor_type
         tensor_shape = []
         if (tensor_type.HasField("shape")):
@@ -131,6 +134,12 @@ class ModelFeatureMapsOnnx():
             if input == inp.name:
                 exists = True
                 shape = self.get_shape_onnx(inp)
+                break
+
+        for inp in self.onnx_model.graph.initializer:
+            if input == inp.name:
+                exists = True
+                shape = self.get_shape_onnx(inp, is_initializer=True)
                 break
 
         return exists, shape
@@ -156,8 +165,10 @@ class ModelFeatureMapsOnnx():
         layers_outputs = {}
         first_layer = True
         self.input_shape = self.get_shape_onnx(self.onnx_model.graph.input[0])[1:]
+        if self.model_name == "resnet3D":
+            self.input_shape = self.get_shape_onnx(self.onnx_model.graph.input[0])
         logging.info("Model input shape = {}".format(self.input_shape))
-                
+
         for n in self.onnx_model.graph.node:
             if n.op_type in self.op_list:
 
@@ -178,25 +189,25 @@ class ModelFeatureMapsOnnx():
                 stride = []
 
                 if first_layer:
-                    for layer_in in n.input:
+                    for i_num, layer_in in enumerate(n.input):
                         exists, shape = self.is_in_inputs(layer_in)
-                        if exists:
+                        if exists and not i_num == 0:
                             logging.info("VARIABLE INPUT {} - {}".format(layer_in, shape))
-                            if 'weight' in layer_in:
+                            if 'weight' in layer_in or i_num == 1:
                                 kernel = shape.copy()
-                            if 'bias' in layer_in:
+                            if 'bias' in layer_in or i_num == 2:
                                 bias = shape.copy()
-                            if 'running_mean' in layer_in:
+                            if 'running_mean' in layer_in or i_num == 3:
                                 running_mean = shape.copy()
-                            if 'running_var' in layer_in:
+                            if 'running_var' in layer_in or i_num == 4:
                                 running_var = shape.copy()
                         else:
                             layer_input_shape.append(self.input_shape.copy())
                             layer_input_id.append(layer_in)
-                            logging.info("INTERMEDIADE INPUT {} - {}".format(layer_in, self.input_shape))
+                            logging.info("MODEL INPUT {} - {}".format(layer_in, self.input_shape))
                     first_layer = False
                 else:
-                    for layer_in in n.input:
+                    for i_num, layer_in in enumerate(n.input):
                         skip_unsupported_layer = False
                         if n.op_type =='MatMul' and self.model_name == 'x3d_m' and layer_in == '988':
                             logging.warning('Workaround to support final FC layers in x3d_m model. This code is specificaly written for this model and won\'t work in other models')
@@ -207,15 +218,15 @@ class ModelFeatureMapsOnnx():
                             layer_in = 'cls_head.fc1.weight'
 
                         exists, shape = self.is_in_inputs(layer_in)
-                        if exists:
+                        if exists and not i_num == 0:
                             logging.info("VARIABLE INPUT {} - {}".format(layer_in, shape))
-                            if 'weight' in layer_in:
+                            if 'weight' in layer_in or i_num == 1:
                                 kernel = shape.copy()
-                            if 'bias' in layer_in:
+                            if 'bias' in layer_in or i_num == 2:
                                 bias = shape.copy()
-                            if 'running_mean' in layer_in:
+                            if 'running_mean' in layer_in or i_num == 3:
                                 running_mean = shape.copy()
-                            if 'running_var' in layer_in:
+                            if 'running_var' in layer_in or i_num == 4:
                                 running_var = shape.copy()
                         else:
                             if layer_in not in layers_outputs.keys():
@@ -233,10 +244,15 @@ class ModelFeatureMapsOnnx():
                     continue
                 out_shape = []
                 if n.op_type == 'Conv':
-                    dilation = n.attribute[0].ints
-                    groups = n.attribute[1].i
-                    padding = n.attribute[3].ints[:3]
-                    stride = n.attribute[4].ints
+                    for attr in n.attribute:
+                        if attr.name == "dilations":
+                            dilation = attr.ints
+                        elif attr.name == "group":
+                            groups = attr.i
+                        elif attr.name == "pads":
+                            padding = attr.ints[:3]
+                        elif attr.name == "strides":
+                            stride = attr.ints
 
                     out_shape = self.calculate_conv_out_shape(layer_input_shape[0].copy(), groups, dilation, kernel, padding, stride)
                 elif 'Pool' in n.op_type:
@@ -246,9 +262,13 @@ class ModelFeatureMapsOnnx():
                         out_shape[3] = 1
                         out_shape[4] = 1
                     else:
-                        kernel_shape = n.attribute[1].ints
-                        padding = n.attribute[2].ints[:3]
-                        stride = n.attribute[3].ints
+                        for attr in n.attribute:
+                            if attr.name == "kernel_shape":
+                                kernel_shape = attr.ints
+                            elif attr.name == "pads":
+                                padding = attr.ints[:3]
+                            elif attr.name == "strides":
+                                stride = attr.ints
 
                         in_shape = layer_input_shape[0].copy()
                         dout = math.floor((in_shape[2] + 2 * padding[0] - (kernel_shape[0] - 1) - 1)/stride[0] + 1)
@@ -2108,7 +2128,7 @@ def get_partition_layers(layers, model_name):
 def parse_args():
     parser = argparse.ArgumentParser(description='MMAction2 parse model')
     parser.add_argument('model_name', help='name of the har model')
-    parser.add_argument('config', help='test config file path')
+    parser.add_argument('--config', help='test config file path')
     parser.add_argument('--use_frames', action='store_true', help='whether to use video decoder or raw frame decoder')
     parser.add_argument('--calculate_pareto', action='store_true', help='whether to calculate and plot pareto front')
     parser.add_argument('--checkpoint', default=None, help='checkpoint file')
@@ -2141,14 +2161,14 @@ def main():
 
     onnx_modeling.from_onnx()
 
-    # onnx_modeling.get_info()
+    onnx_modeling.get_info()
 
-    onnx_modeling.create_modules()
+    # onnx_modeling.create_modules()
 
-    onnx_modeling.create_design_points(file_name=fname, s_in=onnx_modeling.max_words_per_cycle*0.5, s_out=onnx_modeling.max_words_per_cycle*0.5)
-    drop_duplicates(file_name=fname, pareto=False)
-    get_paretto(file_name=fname)
-    drop_duplicates(file_name=fname, pareto=True)
+    # onnx_modeling.create_design_points(file_name=fname, s_in=onnx_modeling.max_words_per_cycle*0.5, s_out=onnx_modeling.max_words_per_cycle*0.5)
+    # drop_duplicates(file_name=fname, pareto=False)
+    # get_paretto(file_name=fname)
+    # drop_duplicates(file_name=fname, pareto=True)
 
     # partition_layers = get_partition_layers(onnx_modeling.modules, args.model_name)
     # for n, l in enumerate(partition_layers):

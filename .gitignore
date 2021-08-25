@@ -144,3 +144,4 @@ i3d.onnx
 x3d_m.onnx
 c3d.onnx
 tsm.onnx
+resnet3D.onnx

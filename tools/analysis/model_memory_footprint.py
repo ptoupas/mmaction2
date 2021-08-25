@@ -21,8 +21,8 @@ for file in os.listdir('fpga_modeling_reports/models_sizes'):
 
 for k in sizes.keys():
     x_axis = np.arange(0, len(sizes[k]['ifmaps']))
-    sns.lineplot(x=x_axis, y=sizes[k]['ifmaps'], label=k+' ifmaps')
-    sns.lineplot(x=x_axis, y=sizes[k]['filters'], label=k+' filters')
+    sns.lineplot(x=x_axis, y=sizes[k]['ifmaps'], label=k+' ifmaps', color='tab:orange')
+    sns.lineplot(x=x_axis, y=sizes[k]['filters'], label=k+' filters', color='b')
     
     plt.hlines(y=1.375, xmin=x_axis[0], xmax=x_axis[-1], label='ZCU104', linestyles='dashed', colors='r')
     plt.hlines(y=4.0125, xmin=x_axis[0], xmax=x_axis[-1], label='ZCU102', linestyles='dashed', colors='g')
