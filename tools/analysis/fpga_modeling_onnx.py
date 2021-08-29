@@ -25,7 +25,8 @@ from functools import reduce
 coloredlogs.install(level='INFO')
 logging.basicConfig(level=logging.INFO)
 np.set_printoptions(precision=5, suppress=True, linewidth=150)
-
+sns.set(rc={'figure.figsize':(15,8)})
+sns.set_style("darkgrid", {"axes.facecolor": ".85"})
 
 class ModelFeatureMapsOnnx():
 
@@ -424,7 +425,7 @@ class ModelFeatureMapsOnnx():
 
         return rate_in, rate_out, muls, adds, mem
 
-    def fc_layer_config(self, in_shape, out_shape, coarse_in, coarse_out, fine, s_in=1, s_out=1):
+    def fc_layer_config(self, in_shape, out_shape, fine, coarse_in, coarse_out, s_in=1, s_out=1):
         in_tensor_size = in_shape[1]
         out_tensor_size = out_shape[1]
 
@@ -1319,9 +1320,9 @@ class ModelFeatureMapsOnnx():
                                         folding_name = "N_Coarse({}/{}) - f_Fine({:.2f}) - Mem BW({:.2f}/{:.2f})".format(coarse_in, coarse_out, fine, fc_bw_in, fc_bw_out)
                                         logging.info("Fold = {}. Tensor In = {} - Tensor Out = {}".format(folding_name, coarse_in_fc, coarse_out_fc))
 
-                                        rate_in, rate_out, muls, adds, mem, depth, (mem_bounded_in, mem_bounded_out) = self.fc_layer_config(in_shape, out_shape, coarse_in, coarse_out, fine, s_in=s_in, s_out=s_out)
+                                        rate_in, rate_out, muls, adds, mem, depth, (mem_bounded_in, mem_bounded_out) = self.fc_layer_config(in_shape, out_shape, fine, coarse_in, coarse_out, s_in=s_in, s_out=s_out)
 
-                                        self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, mem_bounded_out=mem_bounded_out, config=[in_shape, out_shape, coarse_in, coarse_out, fine, int(mem_bounded_in), int(mem_bounded_out)])
+                                        self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, mem_bounded_out=mem_bounded_out, config=[in_shape, out_shape, fine, coarse_in, coarse_out, int(mem_bounded_in), int(mem_bounded_out)])
 
     def product_dict(self, **kwargs):
         keys = kwargs.keys()
@@ -1384,7 +1385,7 @@ class ModelFeatureMapsOnnx():
 
         return rate_in, rate_out, muls, adds, mem, depth, tmp_thr_in, tmp_thr_out
 
-    def non_branching_layer(self, layer_keys, r, membw, dsp_config, depth_config, bram_config, bram_total_util, mem_bw_status, throughput_config):
+    def non_branching_layer(self, layer_keys, r, membw, dsp_config, depth_config, bram_config, bram_total_util, mem_bw_status, throughput_config, params_config):
         #TODO: This is a hardcoded version of supporting the x3d_m classifier. Should be revised in the future for a more generic implementation.
         classifier = False
         if self.model_name == 'x3d_m' and layer_keys == ['Relu_407', 'Conv_408', 'BatchNormalization_409', 'Relu_410', 'GlobalAveragePool_411', 'MatMul_421', 'Relu_422', 'Gemm_423']:
@@ -1402,6 +1403,7 @@ class ModelFeatureMapsOnnx():
             if 'MatMul' in l.split('_') or 'Gemm' in l.split('_'):
                 fc_layers_count += 1
 
+        params_per_module = {}
         for mem_bw_in in membw_config:
             if classifier:
                 fc_layer_bw = (membw - mem_bw_in)/2
@@ -1425,7 +1427,31 @@ class ModelFeatureMapsOnnx():
                     else:
                         mod_rin, mod_rout, mod_muls, mod_adds, mod_mem, mod_depth, mod_thrin, mod_throut = self.get_rates(k, r[k][-1], prev_mod_rout, membw, mem_on_chip_bw)
                 prev_mod_rout = mod_rout
-                
+
+                param_dict = {}
+                if 'MatMul' in k.split('_') or 'Gemm' in k.split('_'):
+                    param_dict["fine"] = r[k][-1][2]
+                    param_dict["coarse in"] = r[k][-1][3]
+                    param_dict["coarse out"] = r[k][-1][4]
+                    params_per_module[k] = param_dict
+                elif 'Conv' in k.split('_'):
+                    param_dict["fine"] = r[k][-1][5]
+                    param_dict["coarse in"] = r[k][-1][6]
+                    param_dict["coarse out"] = r[k][-1][7]
+                    params_per_module[k] = param_dict
+                elif 'Se' in k.split('_'):
+                    param_dict["coarse gap"] = r[k][-1][1]
+                    param_dict["fine conv1"] = r[k][-1][7]
+                    param_dict["coarse in conv1"] = r[k][-1][8]
+                    param_dict["coarse out conv1"] = r[k][-1][9]
+                    param_dict["fine conv2"]  = r[k][-1][15]
+                    param_dict["coarse in conv2"] = r[k][-1][16]
+                    param_dict["coarse out conv2"] = r[k][-1][17]
+                    params_per_module[k] = param_dict
+                elif 'GlobalAveragePool' in k.split('_'):
+                    param_dict["coarse"] = r[k][-1][1]
+                    params_per_module[k] = param_dict
+
                 if classifier and k == 'MatMul_421':
                     fc1_thr_in = mod_thrin
                     fc1_thr_out = mod_throut
@@ -1508,6 +1534,7 @@ class ModelFeatureMapsOnnx():
             dsp_config.append(dsps_util)
             bram_total_util.append(bram_util)
             throughput_config.append(thr_out)
+            params_config.append(json.dumps(params_per_module))
         
     def compose_layers(self, file_name, layers_names, final_name, model_name, calculate_pareto, membw, branch_on_bram):
         sns.set(rc={'figure.figsize':(15,8)})
@@ -1548,7 +1575,8 @@ class ModelFeatureMapsOnnx():
         bram_total_util = []
         mem_bw_status = []
         throughput_config = []
-        
+        params_config = []
+
         res = list(self.product_dict(**l_configs))
         
         for r in tqdm(res, leave=False):
@@ -1559,7 +1587,7 @@ class ModelFeatureMapsOnnx():
 
             branches_points = [i for i in range(len(layer_keys)) if self.modules[layer_keys[i]]['branching'] and not layer_keys[i].split("_")[0] == "Se"]
             if len(branches_points) == 0:
-                self.non_branching_layer(layer_keys, r, membw, dsp_config, depth_config, bram_config, bram_total_util, mem_bw_status, throughput_config)
+                self.non_branching_layer(layer_keys, r, membw, dsp_config, depth_config, bram_config, bram_total_util, mem_bw_status, throughput_config, params_config)
                 continue
 
             # in_shape = self.modules[layer_keys[0]]['shape_in']
@@ -1571,6 +1599,7 @@ class ModelFeatureMapsOnnx():
             membw_config = [0.2*membw, 0.3*membw, 0.4*membw, 0.5*membw, 0.6*membw, 0.7*membw, 0.8*membw]
             mem_on_chip_bw = 10000
             
+            params_per_module = {}
             for mem_bw_in in membw_config:
                 total_depth = 0
                 total_mem = 0
@@ -1598,6 +1627,31 @@ class ModelFeatureMapsOnnx():
                                 mod_rin, mod_rout, mod_muls, mod_adds, mod_mem, mod_depth, mod_thrin, mod_throut = self.get_rates(k, r[k][-1], mem_on_chip_bw, membw, mem_on_chip_bw)
                         else:
                             mod_rin, mod_rout, mod_muls, mod_adds, mod_mem, mod_depth, mod_thrin, mod_throut = self.get_rates(k, r[k][-1], prev_mod_rout, membw, mem_on_chip_bw)
+
+                        param_dict = {}
+                        if 'MatMul' in k.split('_') or 'Gemm' in k.split('_'):
+                            param_dict["fine"] = r[k][-1][2]
+                            param_dict["coarse in"] = r[k][-1][3]
+                            param_dict["coarse out"] = r[k][-1][4]
+                            params_per_module[k] = param_dict
+                        elif 'Conv' in k.split('_'):
+                            param_dict["fine"] = r[k][-1][5]
+                            param_dict["coarse in"] = r[k][-1][6]
+                            param_dict["coarse out"] = r[k][-1][7]
+                            params_per_module[k] = param_dict
+                        elif 'Se' in k.split('_'):
+                            param_dict["coarse gap"] = r[k][-1][1]
+                            param_dict["fine conv1"] = r[k][-1][7]
+                            param_dict["coarse in conv1"] = r[k][-1][8]
+                            param_dict["coarse out conv1"] = r[k][-1][9]
+                            param_dict["fine conv2"]  = r[k][-1][15]
+                            param_dict["coarse in conv2"] = r[k][-1][16]
+                            param_dict["coarse out conv2"] = r[k][-1][17]
+                            params_per_module[k] = param_dict
+                        elif 'GlobalAveragePool' in k.split('_'):
+                            param_dict["coarse"] = r[k][-1][1]
+                            params_per_module[k] = param_dict
+
                         prev_mod_rout = mod_rout
 
                         rates_graph_list[rg_idx][i,i] = mod_rin
@@ -1743,6 +1797,7 @@ class ModelFeatureMapsOnnx():
                 dsp_config.append(dsps_util)
                 bram_total_util.append(bram_util)
                 throughput_config.append(thr_out)
+                params_config.append(json.dumps(params_per_module))
 
         if calculate_pareto:
             scores = np.zeros((len(throughput_config), 2))
@@ -1765,26 +1820,30 @@ class ModelFeatureMapsOnnx():
         best_bram = 0
         best_depth = 0
         best_bw_stat = "Unknown"
-        for thr, dsp, bram, bw_stat, p_depth in zip(throughput_config, dsp_config, bram_total_util, mem_bw_status, depth_config):
+        best_params = []
+
+        for thr, dsp, bram, bw_stat, p_depth, mod_params in zip(throughput_config, dsp_config, bram_total_util, mem_bw_status, depth_config, params_config):
             if thr > max_throughput and dsp < 90.0 and bram < 90.0:
                 max_throughput = thr
                 best_dsp = dsp
                 best_bram = bram
                 best_depth = p_depth
                 best_bw_stat = bw_stat
+                best_params = mod_params
             if thr == max_throughput:
                 if (dsp < best_dsp and bram <= best_bram) or (dsp <= best_dsp and bram < best_bram):
                     best_dsp = dsp
                     best_bram = bram
                     best_depth = p_depth
                     best_bw_stat = bw_stat
+                    best_params = mod_params
         with open(csv_file, mode='a') as model_results:
             csv_writer = csv.writer(model_results, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
             if final_name == 1:
-                csv_writer.writerow(['Layer Name', 'Iteration Interval', 'Throughput(outputs/sec)', 'Latency(sec)', 'DSPs(%)', 'BRAM(%)', 'Memory BW Status', 'Pipeline Depth'])
+                csv_writer.writerow(["Layer Name", "Iteration Interval", "Throughput(outputs/sec)", "Latency(sec)", "DSPs(%)", "BRAM(%)", "Memory BW Status", "Pipeline Depth", "Modules Parameters"])
             ii = math.ceil(1/(max_throughput/self.cycles_per_sec))
-            csv_writer.writerow([final_name, ii, max_throughput, 1/max_throughput, best_dsp, best_bram, best_bw_stat, best_depth])
-        logging.warning("Best config for layer {}. Iteration Interval = {}, Throughput = {:.5f}, Latency = {:.5f}, DSPs(%) = {:.5f}, BRAM(%) = {:.5f}, Mem BW = {}, Pipeline Depth = {}".format(final_name, ii, max_throughput, 1/max_throughput, best_dsp, best_bram, best_bw_stat, best_depth))
+            csv_writer.writerow([final_name, ii, max_throughput, 1/max_throughput, best_dsp, best_bram, best_bw_stat, best_depth, best_params])
+        logging.warning("Best config for layer {}. Iteration Interval = {}, Throughput = {:.5f}, Latency = {:.5f}, DSPs(%) = {:.5f}, BRAM(%) = {:.5f}, Mem BW = {}, Pipeline Depth = {}, Modules Parameters = {}".format(final_name, ii, max_throughput, 1/max_throughput, best_dsp, best_bram, best_bw_stat, best_depth, best_params))
 
         sns.scatterplot(x=throughput_config, y=dsp_config, hue=bram_config, style=mem_bw_status, alpha=.5, size=bram_total_util)
         plt.axhline(y=100, color='r', linestyle='-')
@@ -1826,8 +1885,6 @@ def find_pareto(scores):
 
 def plot_graph(x, y, bram_util, bram, mem_compute_bounded, leg, name, type, model_name, calculate_pareto):
     se_layer = True if "Se" in name.split("_") else False
-    sns.set(rc={'figure.figsize':(15,8)})
-    sns.set_style("darkgrid", {"axes.facecolor": ".85"})
     
     dsps_dir = os.path.join(os.getcwd(), 'fpga_modeling_reports', 'graphs', model_name, 'throughput_dsps')
     if not os.path.exists(dsps_dir):
@@ -2028,6 +2085,46 @@ def drop_duplicates(file_name="x3d_m", pareto=False):
     os.remove(csv_file_read)
     data_droped.to_csv(csv_file_read, index=False)
 
+def plot_best_config_params(file_name="x3d_m"):
+    csv_file = os.path.join(os.getcwd(), 'fpga_modeling_reports', file_name + '_max_throughput_design_points.csv')
+    with open(csv_file, mode='r') as model_results:
+        csv_reader = csv.reader(model_results, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+
+        cols = {}
+        for i, c in enumerate(next(csv_reader)):
+            cols[c] = i
+        logging.info(cols)
+
+        fine = []
+        coarse_in = []
+        coarse_out = []
+        for i, row in enumerate(csv_reader):
+            curr_dict = json.loads(row[cols["Modules Parameters"]])
+            for layer in curr_dict.keys():
+                operation_type = layer.split('_')[0]
+                if operation_type == 'Conv':
+                    fine.append(curr_dict[layer]["fine"])
+                    coarse_in.append(curr_dict[layer]["coarse in"])
+                    coarse_out.append(curr_dict[layer]["coarse out"])
+                if operation_type == 'Se':
+                    fine.append(curr_dict[layer]["fine conv1"])
+                    fine.append(curr_dict[layer]["fine conv2"])
+                    coarse_in.append(curr_dict[layer]["coarse in conv1"])
+                    coarse_in.append(curr_dict[layer]["coarse in conv2"])
+                    coarse_out.append(curr_dict[layer]["coarse out conv1"])
+                    coarse_out.append(curr_dict[layer]["coarse out conv2"])
+
+        x_axis = np.arange(0, len(fine))
+        sns.lineplot(x=x_axis, y=fine, label='fine')
+        sns.lineplot(x=x_axis, y=coarse_in, label='coarse in')
+        sns.lineplot(x=x_axis, y=coarse_out, label='coarse out')
+
+        plt.title('Parameters configuration over layers')
+        plt.legend()
+        plt.xlabel('Conv Layers')
+        plt.yscale('log')
+        plt.savefig('fpga_modeling_reports/param_analysis/' + file_name + '/best_configuration_param_comparison.png')
+
 def get_paretto(file_name="x3d_m"):
     
     csv_file_par = os.path.join(os.getcwd(), 'fpga_modeling_reports', file_name + '_pareto.csv')
@@ -2161,21 +2258,22 @@ def main():
 
     onnx_modeling.from_onnx()
 
-    onnx_modeling.get_info()
+    # onnx_modeling.get_info()
 
-    # onnx_modeling.create_modules()
+    onnx_modeling.create_modules()
 
     # onnx_modeling.create_design_points(file_name=fname, s_in=onnx_modeling.max_words_per_cycle*0.5, s_out=onnx_modeling.max_words_per_cycle*0.5)
     # drop_duplicates(file_name=fname, pareto=False)
     # get_paretto(file_name=fname)
     # drop_duplicates(file_name=fname, pareto=True)
 
-    # partition_layers = get_partition_layers(onnx_modeling.modules, args.model_name)
-    # for n, l in enumerate(partition_layers):
-    #     print("Evaluating Layer {}/{}".format(n+1, len(partition_layers)))
-    #     onnx_modeling.compose_layers(fname_pareto, l, n+1, fname, args.calculate_pareto, onnx_modeling.max_words_per_cycle, branch_on_bram=False)
+    partition_layers = get_partition_layers(onnx_modeling.modules, args.model_name)
+    for n, l in enumerate(partition_layers):
+        print("Evaluating Layer {}/{}".format(n+1, len(partition_layers)))
+        onnx_modeling.compose_layers(fname_pareto, l, n+1, fname, args.calculate_pareto, onnx_modeling.max_words_per_cycle, branch_on_bram=False)
 
     # performance_graphs(file_name=fname, layers_to_plot=['Conv', 'Se', 'GlobalAveragePool', 'MatMul', 'Gemm'], calculate_pareto=args.calculate_pareto)
+    plot_best_config_params(file_name=args.model_name)
 
 if __name__ == '__main__':
     main()
