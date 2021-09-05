@@ -986,7 +986,7 @@ class ModelFeatureMapsOnnx():
                     operation = self.modules[k]['operation']
                     logging.warning("Layer: {} -> Operation: {}.".format(name, operation))
 
-                    # if not (operation == 'MatMul' or operation == 'Gemm'):
+                    # if not (operation == 'Conv'):
                     #     continue
                     if operation == 'Conv':
                         out_shape = self.modules[name]['shape_out']
@@ -1844,6 +1844,8 @@ class ModelFeatureMapsOnnx():
         # Search the points in pareto front (per layer) with the maximum throughput and save them in a csv file.
         model_name_ = file_name.split("onnx")[0]
         csv_file = os.path.join(os.getcwd(), 'fpga_modeling_reports', model_name_ + 'max_throughput_design_points.csv')
+        if os.path.exists(csv_file):
+            os.remove(csv_file)
         max_throughput = 0
         best_dsp = 0
         best_bram = 0
@@ -1874,8 +1876,8 @@ class ModelFeatureMapsOnnx():
             if final_name == 1:
                 csv_writer.writerow(["Layer Name", "Latency(cycles new)", "Latency(cycles/output)", "Throughput(outputs/sec)", "Latency(secs/output)", "DSPs(%)", "BRAM(%)", "Memory BW Status", "Pipeline Depth", "Modules Parameters"])
             interval = math.ceil(1/(max_throughput/self.cycles_per_sec))
-            csv_writer.writerow([final_name, best_latency, interval, max_throughput, 1/max_throughput, best_dsp, best_bram, best_bw_stat, best_depth, best_params])
-        logging.warning("Best config for layer {}. Latency(cycles new) = {}, Latency(cycles/output) = {}, Throughput(outputs/sec) = {:.5f}, Latency(secs/output) = {:.5f}, DSPs(%) = {:.5f}, BRAM(%) = {:.5f}, Mem BW = {}, Pipeline Depth = {}, Modules Parameters = {}".format(final_name, interval, max_throughput, 1/max_throughput, best_dsp, best_bram, best_bw_stat, best_depth, best_params))
+            csv_writer.writerow([final_name, int(best_latency), interval, max_throughput, 1/max_throughput, best_dsp, best_bram, best_bw_stat, best_depth, best_params])
+        logging.warning("Best config for layer {}. Latency(cycles new) = {}, Latency(cycles/output) = {}, Throughput(outputs/sec) = {:.5f}, Latency(secs/output) = {:.5f}, DSPs(%) = {:.5f}, BRAM(%) = {:.5f}, Mem BW = {}, Pipeline Depth = {}, Modules Parameters = {}".format(final_name, int(best_latency), interval, max_throughput, 1/max_throughput, best_dsp, best_bram, best_bw_stat, best_depth, best_params))
 
         sns.scatterplot(x=throughput_config, y=dsp_config, hue=bram_config, style=mem_bw_status, alpha=.5, size=bram_total_util)
         plt.axhline(y=100, color='r', linestyle='-')
@@ -2163,7 +2165,7 @@ def get_paretto(file_name="x3d_m"):
     with open(csv_file_par, mode='w') as pareto_results:
         csv_writer_par = csv.writer(pareto_results, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
 
-        csv_writer_par.writerow(["Layer", "Folding", "On-Chip Memory(BRAM %)", "DSPS %", "Consumption(inputs/sec)", "Throughtput(outputs/sec)", "Memory Bandwidth In(words/cycle)", "Memory Bandwidth Out(words/cycle)", "On-Chip Memory(KB)", "On-Chip Memory(BRAM)", "Memory Bandwidth In(GBs/sec)", "Memory Bandwidth Out(GBs/sec)", "Multipliers", "Adders", "DSPS", "Throughtput(words/cycle)", "Throughtput(GOps/sec)", "Configuration"])
+        csv_writer_par.writerow(["Layer", "Folding", "On-Chip Memory(BRAM %)", "DSPS %", "Consumption(inputs/sec)", "Throughtput(outputs/sec)", "Memory Bandwidth In(words/cycle)", "Memory Bandwidth Out(words/cycle)", "On-Chip Memory(KB)", "On-Chip Memory(BRAM)", "Memory Bandwidth In(GBs/sec)", "Memory Bandwidth Out(GBs/sec)", "Multipliers", "Adders", "DSPS", "Depth", "Latency", "Throughtput(words/cycle)", "Throughtput(GOps/sec)", "Configuration"])
 
         csv_file = os.path.join(os.getcwd(), 'fpga_modeling_reports', file_name + '.csv')
         with open(csv_file, mode='r') as model_results:
@@ -2285,8 +2287,8 @@ def main():
         The ZCU104 has a total of 1728 DSP slices
     '''
 
-    # Target FPGA Zynq UltraScale+ MPSoC ZCU104. Assuming clock frequency of 100 MHz.
-    onnx_modeling = ModelFeatureMapsOnnx(model=args.model_name, word_length=16, clock_freq=100, bram=624, dsp=1728, mem_bw=2.6)
+    # Target FPGA Zynq UltraScale+ MPSoC ZCU102. Assuming clock frequency of 100 MHz.
+    onnx_modeling = ModelFeatureMapsOnnx(model=args.model_name, word_length=16, clock_freq=150, bram=1825, dsp=2520, mem_bw=16.3)
 
     onnx_modeling.from_onnx()
 
