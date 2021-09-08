@@ -398,7 +398,7 @@ class ModelFeatureMapsOnnx():
 
         workload_in = cin*din*hin*win
         workload_out = cin
-        latency = max(workload_in*rate_in, workload_out*rate_out)
+        latency = max(workload_in/rate_in, workload_out/rate_out)
 
         return rate_in, rate_out, muls, adds, mem, depth, latency, (mem_bounded_in, mem_bounded_out)
 
@@ -457,7 +457,7 @@ class ModelFeatureMapsOnnx():
         depth = coarse_in
         workload_in = in_tensor_size
         workload_out = out_tensor_size
-        latency = max(workload_in*rate_in, workload_out*rate_out)
+        latency = max(workload_in/rate_in, workload_out/rate_out)
         
         return rate_in, rate_out, muls, adds, mem, depth, latency, (mem_bounded_in, mem_bounded_out)
 
@@ -564,7 +564,7 @@ class ModelFeatureMapsOnnx():
 
         workload_in = cin*din*hin*win
         workload_out = cout*dout*hout*wout
-        latency = max(workload_in*rate_in, workload_out*rate_out)
+        latency = max(workload_in/rate_in, workload_out/rate_out)
 
         return rate_in, rate_out, muls, adds, mem, depth, latency, (mem_bounded_in, mem_bounded_out)
 
@@ -669,7 +669,7 @@ class ModelFeatureMapsOnnx():
         if se_on_bram == 1:
             mem += depth
     
-        latency = glavpool_latency + conv1_latency + conv2_latency
+        latency = max(glavpool_latency, conv1_latency, conv2_latency)
         return rate_in, rate_out, muls, adds, mem, depth, latency, (mem_bounded_in, mem_bounded_out)
 
     def get_layer_from_id(self, layer_id):
@@ -1483,7 +1483,7 @@ class ModelFeatureMapsOnnx():
                 rate_graph[i,i] = mod_rin
                 rate_graph[i,i+1] = mod_rout
 
-                total_latency += mod_latency
+                total_latency = max(total_latency, mod_latency)
                 total_depth += mod_depth
                 total_mem += mod_mem
                 total_muls += mod_muls
@@ -1682,7 +1682,7 @@ class ModelFeatureMapsOnnx():
                         rates_graph_list[rg_idx][i,i] = mod_rin
                         rates_graph_list[rg_idx][i,i+1] = mod_rout
 
-                        total_latency = mod_latency
+                        total_latency = max(total_latency, mod_latency)
                         total_depth += mod_depth
                         total_mem += mod_mem
                         total_muls += mod_muls
@@ -1728,7 +1728,7 @@ class ModelFeatureMapsOnnx():
                     final_layer = layer_keys[branches_points[-1]]
                     mod_rin, mod_rout, mod_muls, mod_adds, mod_mem, mod_depth, mod_latency, mod_thrin, mod_throut = self.get_rates(final_layer, r[final_layer][-1], rate_in, membw, mem_on_chip_bw)
                     
-                    total_latency = mod_latency
+                    total_latency = max(total_latency, mod_latency)
                     total_depth += mod_depth
                     total_mem += mod_mem
                     total_muls += mod_muls
@@ -1768,7 +1768,7 @@ class ModelFeatureMapsOnnx():
                     final_layer = layer_keys[branches_points[-1]]
                     mod_rin, mod_rout, mod_muls, mod_adds, mod_mem, mod_depth, mod_latency, mod_thrin, mod_throut = self.get_rates(final_layer, r[final_layer][-1], rate_in, membw, mem_on_chip_bw)
                     
-                    total_latency = mod_latency
+                    total_latency = max(total_latency, mod_latency)
                     total_depth += mod_depth
                     total_mem += mod_mem
                     total_muls += mod_muls
@@ -1844,8 +1844,6 @@ class ModelFeatureMapsOnnx():
         # Search the points in pareto front (per layer) with the maximum throughput and save them in a csv file.
         model_name_ = file_name.split("onnx")[0]
         csv_file = os.path.join(os.getcwd(), 'fpga_modeling_reports', model_name_ + 'max_throughput_design_points.csv')
-        if os.path.exists(csv_file):
-            os.remove(csv_file)
         max_throughput = 0
         best_dsp = 0
         best_bram = 0
@@ -2277,18 +2275,18 @@ def main():
 
     '''
         The ZCU102 has BRAM size equal to 32.1 Mbits (4.0125 MBytes). This divided by the 18 Kbits size of each BRAM gives a total of 1825 BRAM units.
-        The ZCU102 has 24 GTH gigabit transceivers of 16.3 Gb/s, i.e. a total of 391.2 Gb/s or 48.9 GB/s. HP ports support up to (2.6 Gb/s or 325 MB/s) on the PL-size.
+        The ZCU102 has 4Gb DDR4 memory clocked at 1200MHz with 16-bit bus width. This leads to a total of 18.75 Gb/s or 2.35 GB/s.
         The ZCU102 has a total of 2520 DSP slices
     '''
     '''
         The ZCU104 has BRAM size equal to 11 Mbits (1.375 MBytes). This divided by the 18 Kbits size of each BRAM gives a total of 624 BRAM units.
         The ZCU104 has also 27 Mbits (3.375 MBytes) of URAM. This divided by the 288 Kbits size of each URAM gives a total of 96 URAM units.
-        The ZCU104 has 24 GTH gigabit transceivers of 16.3 Gb/s, i.e. a total of 391.2 Gb/s or 48.9 GB/s. HP ports support up to (2.6 Gb/s or 325 MB/s) on the PL-size.
+        The ZCU104 has 4Gb DDR4 memory clocked at 1200MHz with 16-bit bus width. This leads to a total of 18.75 Gb/s or 2.35 GB/s.
         The ZCU104 has a total of 1728 DSP slices
     '''
 
-    # Target FPGA Zynq UltraScale+ MPSoC ZCU102. Assuming clock frequency of 100 MHz.
-    onnx_modeling = ModelFeatureMapsOnnx(model=args.model_name, word_length=16, clock_freq=150, bram=1825, dsp=2520, mem_bw=16.3)
+    # Target FPGA Zynq UltraScale+ MPSoC ZCU102. Assuming clock frequency of 100 MHz. The mem bandwidth used is 80% of its nominal value.
+    onnx_modeling = ModelFeatureMapsOnnx(model=args.model_name, word_length=16, clock_freq=100, bram=1825, dsp=2520, mem_bw=15.0)
 
     onnx_modeling.from_onnx()
 
@@ -2296,18 +2294,20 @@ def main():
 
     onnx_modeling.create_modules()
 
-    # onnx_modeling.create_design_points(file_name=fname, s_in=onnx_modeling.max_words_per_cycle*0.5, s_out=onnx_modeling.max_words_per_cycle*0.5)
-    # drop_duplicates(file_name=fname, pareto=False)
-    # get_paretto(file_name=fname)
-    # drop_duplicates(file_name=fname, pareto=True)
-
-    partition_layers = get_partition_layers(onnx_modeling.modules, args.model_name)
-    for n, l in enumerate(partition_layers):
-        print("Evaluating Layer {}/{}".format(n+1, len(partition_layers)))
-        onnx_modeling.compose_layers(fname_pareto, l, n+1, fname, args.calculate_pareto, onnx_modeling.max_words_per_cycle, branch_on_bram=False)
+    onnx_modeling.create_design_points(file_name=fname, s_in=onnx_modeling.max_words_per_cycle*0.5, s_out=onnx_modeling.max_words_per_cycle*0.5)
+    drop_duplicates(file_name=fname, pareto=False)
+    get_paretto(file_name=fname)
+    drop_duplicates(file_name=fname, pareto=True)
 
     # performance_graphs(file_name=fname, layers_to_plot=['Conv', 'Se', 'GlobalAveragePool', 'MatMul', 'Gemm'], calculate_pareto=args.calculate_pareto)
-    plot_best_config_params(file_name=args.model_name)
+
+
+    # partition_layers = get_partition_layers(onnx_modeling.modules, args.model_name)
+    # for n, l in enumerate(partition_layers):
+    #     print("Evaluating Layer {}/{}".format(n+1, len(partition_layers)))
+    #     onnx_modeling.compose_layers(fname_pareto, l, n+1, fname, args.calculate_pareto, onnx_modeling.max_words_per_cycle, branch_on_bram=False)
+
+    # plot_best_config_params(file_name=args.model_name)
 
 if __name__ == '__main__':
     main()
