@@ -160,7 +160,7 @@ class Recognizer2D(BaseRecognizer):
         """
         assert self.with_cls_head
         batches = imgs.shape[0]
-        imgs = imgs.reshape((-1, ) + imgs.shape[2:])
+        # imgs = imgs.reshape((-1, ) + imgs.shape[2:])
         num_segs = imgs.shape[0] // batches
 
         x = self.extract_feat(imgs)

@@ -110,7 +110,7 @@ class Recognizer3D(BaseRecognizer):
             Tensor: Class score.
         """
         assert self.with_cls_head
-        imgs = imgs.reshape((-1, ) + imgs.shape[2:])
+        # imgs = imgs.reshape((-1, ) + imgs.shape[2:])
         x = self.extract_feat(imgs)
 
         if self.with_neck:

@@ -7,7 +7,7 @@ import torch
 from mmcv.runner import load_checkpoint
 
 from mmaction.models import build_model
-
+from mmaction.models import recognizers
 try:
     import onnx
     import onnxruntime as rt
@@ -63,6 +63,8 @@ def pytorch2onnx(model,
     model.cpu().eval()
 
     input_tensor = torch.randn(input_shape)
+    if isinstance(model, recognizers.Recognizer2D):
+        input_tensor = input_tensor.reshape((-1, ) + input_tensor.shape[2:])
 
     register_extra_symbolics(opset_version)
     torch.onnx.export(
@@ -70,7 +72,7 @@ def pytorch2onnx(model,
         input_tensor,
         output_file,
         export_params=True,
-        keep_initializers_as_inputs=True,
+        keep_initializers_as_inputs=False,
         verbose=show,
         opset_version=opset_version,
         do_constant_folding=False,
