@@ -14,7 +14,7 @@ from tqdm import tqdm
 coloredlogs.install(level='INFO')
 logging.basicConfig(level=logging.INFO)
 sns.set(rc={'figure.figsize':(15,8)})
-sns.set_style("darkgrid", {"axes.facecolor": ".85"})
+sns.set_style("whitegrid")
 
 class ModelAnalyser():
     def __init__(self, model):

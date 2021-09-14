@@ -7,6 +7,8 @@ import coloredlogs
 import logging
 import onnx
 import json
+import time
+import ray
 import itertools
 import concurrent.futures
 
@@ -22,11 +24,21 @@ from numpy.lib.function_base import append
 from numpy.testing._private.utils import assert_equal
 from functools import reduce
 
-coloredlogs.install(level='INFO')
-logging.basicConfig(level=logging.INFO)
+from multiprocessing import Pool
+from timebudget import timebudget
+
+timebudget.set_quiet()       # don't show measurements as they happen
+timebudget.report_at_exit()  # Generate report when the program exits
+
+coloredlogs.install(level='WARNING')
+logging.basicConfig(level=logging.WARNING)
 np.set_printoptions(precision=5, suppress=True, linewidth=150)
 sns.set(rc={'figure.figsize':(15,8)})
-sns.set_style("darkgrid", {"axes.facecolor": ".85"})
+sns.set_style("whitegrid")
+
+@timebudget
+def multithreaded_modeling(operation, input, pool):
+    pool.starmap(operation, input)
 
 class ModelFeatureMapsOnnx():
 
@@ -48,13 +60,12 @@ class ModelFeatureMapsOnnx():
 
         self.op_list = ['Conv', 'BatchNormalization', 'Relu', 'GlobalAveragePool', 'AveragePool', 'MaxPool', 'Sigmoid', 'Mul', 'Add', 'Div', 'MatMul', 'Gemm', 'Elu', 'Flatten', 'GRU', 'HardSigmoid', 'LSTM', 'LeakyRelu', 'PRelu', 'RNN', 'Selu', 'Tanh', 'Celu', 'HardSwish', 'Softmax']
         self.onnx_model = onnx.load(self.model_path)
+        self.onnx_model = onnx.shape_inference.infer_shapes(self.onnx_model)
         onnx.checker.check_model(self.onnx_model)
 
         # print(onnx.helper.printable_graph(self.onnx_model.graph))
 
-    def thread_helper(self, arguments):
-        self.compose_layers(arguments[0], arguments[1], arguments[2], arguments[3], arguments[4], arguments[5], arguments[6])
-
+    @timebudget
     def balance_module_rates_new(self, rate_graph):
         
         rate_ratio = [ abs(rate_graph[i,i]/rate_graph[i-1,i]) for i in range(1,rate_graph.shape[1]-1) ]
@@ -161,19 +172,30 @@ class ModelFeatureMapsOnnx():
 
         return out_shape
 
+    def get_output_shape(self, out_node):
+        for fmap in self.onnx_model.graph.value_info:
+            if fmap.name == out_node:
+                out_shape = []
+                for dim in fmap.type.tensor_type.shape.dim:
+                    out_shape.append(dim.dim_value)
+                return out_shape
+                break
+        return []
+
+    @timebudget
     def from_onnx(self):
 
         layers_outputs = {}
         first_layer = True
-        self.input_shape = self.get_shape_onnx(self.onnx_model.graph.input[0])[1:]
-        if self.model_name == "resnet3D":
-            self.input_shape = self.get_shape_onnx(self.onnx_model.graph.input[0])
+        self.input_shape = self.get_shape_onnx(self.onnx_model.graph.input[0])
+        # if self.model_name == "resnet3D":
+        #     self.input_shape = self.get_shape_onnx(self.onnx_model.graph.input[0])
         logging.info("Model input shape = {}".format(self.input_shape))
-
+        assert len(self.onnx_model.graph.input) == 1, "Model has multiple inputs or the initializers are duplicated to inputs as well. Aborting..."
         for n in self.onnx_model.graph.node:
             if n.op_type in self.op_list:
 
-                logging.info("Node ({}):\n{}".format(n.name, n.input))
+                logging.info("Node ({}) inputs: {}".format(n.name, n.input))
                 
                 skip_layer = False
 
@@ -210,11 +232,11 @@ class ModelFeatureMapsOnnx():
                 else:
                     for i_num, layer_in in enumerate(n.input):
                         skip_unsupported_layer = False
-                        if n.op_type =='MatMul' and self.model_name == 'x3d_m' and layer_in == '988':
+                        if n.op_type =='MatMul' and self.model_name == 'x3d_m' and layer_in == '968':
                             logging.warning('Workaround to support final FC layers in x3d_m model. This code is specificaly written for this model and won\'t work in other models')
                             skip_unsupported_layer = True
-                            layer_in = '980'
-                        if n.op_type =='MatMul' and self.model_name == 'x3d_m' and layer_in == '989':
+                            layer_in = '960'
+                        if n.op_type =='MatMul' and self.model_name == 'x3d_m' and layer_in == '969':
                             logging.warning('Workaround to support final FC layers in x3d_m model. This code is specificaly written for this model and won\'t work in other models')
                             layer_in = 'cls_head.fc1.weight'
 
@@ -247,44 +269,28 @@ class ModelFeatureMapsOnnx():
                 if n.op_type == 'Conv':
                     for attr in n.attribute:
                         if attr.name == "dilations":
-                            dilation = attr.ints
+                            dilation = list(attr.ints)
                         elif attr.name == "group":
                             groups = attr.i
                         elif attr.name == "pads":
-                            padding = attr.ints[:3]
+                            padding = list(attr.ints[:3])
                         elif attr.name == "strides":
-                            stride = attr.ints
-
-                    out_shape = self.calculate_conv_out_shape(layer_input_shape[0].copy(), groups, dilation, kernel, padding, stride)
+                            stride = list(attr.ints)
+                    out_shape = self.get_output_shape(n.output[0])
                 elif 'Pool' in n.op_type:
                     if n.op_type == 'GlobalAveragePool':
-                        out_shape = layer_input_shape[0].copy()
-                        out_shape[2] = 1
-                        out_shape[3] = 1
-                        out_shape[4] = 1
+                        out_shape = self.get_output_shape(n.output[0])
                     else:
                         for attr in n.attribute:
                             if attr.name == "kernel_shape":
-                                kernel_shape = attr.ints
+                                kernel_shape = list(attr.ints)
                             elif attr.name == "pads":
-                                padding = attr.ints[:3]
+                                padding = list(attr.ints[:3])
                             elif attr.name == "strides":
-                                stride = attr.ints
-
-                        in_shape = layer_input_shape[0].copy()
-                        dout = math.floor((in_shape[2] + 2 * padding[0] - (kernel_shape[0] - 1) - 1)/stride[0] + 1)
-                        hout = math.floor((in_shape[3] + 2 * padding[1] - (kernel_shape[1] - 1) - 1)/stride[1] + 1)
-                        wout = math.floor((in_shape[4] + 2 * padding[2] - (kernel_shape[2] - 1) - 1)/stride[2] + 1)
-                            
-                        out_shape.append(in_shape[0])
-                        out_shape.append(in_shape[1])
-                        out_shape.append(dout)
-                        out_shape.append(hout)
-                        out_shape.append(wout)
+                                stride = list(attr.ints)
+                        out_shape = self.get_output_shape(n.output[0])
                 elif n.op_type == 'Mul' or n.op_type == 'Add' or n.op_type == 'Div':
-                    inputs_curr = np.array(layer_input_shape)
-                    shape_idx = np.argmax(np.prod(inputs_curr, axis=1))
-                    out_shape = layer_input_shape[shape_idx].copy()
+                    out_shape = self.get_output_shape(n.output[0])
                 elif n.op_type == 'MatMul':
                     if len(kernel) > 0:
                         out_shape.append(layer_input_shape[0][0])
@@ -298,6 +304,7 @@ class ModelFeatureMapsOnnx():
                 else:
                     out_shape = layer_input_shape[0].copy()
                 
+                assert len(n.output) == 1, "More than one outputs for layer {}".format(n.name)
                 logging.info("OUTPUT {} - {}".format(n.output, out_shape))
                 layers_outputs[n.output[0]] = out_shape
                 self.layers[n.name] = {"operation": n.op_type,
@@ -313,7 +320,7 @@ class ModelFeatureMapsOnnx():
                                 "bias": bias,
                                 "running_mean": running_mean,
                                 "running_var": running_var,}
-    
+    @timebudget
     def get_info(self):
         file = open("fpga_modeling_reports/models_sizes/" + self.model_name + "_conv_sizes.txt", "w")
         for k in self.layers.keys():
@@ -455,7 +462,7 @@ class ModelFeatureMapsOnnx():
             rate_out = s_out
         
         depth = coarse_in
-        workload_in = in_tensor_size
+        workload_in = in_tensor_size*out_tensor_size #we stream the weights as input
         workload_out = out_tensor_size
         latency = max(workload_in/rate_in, workload_out/rate_out)
         
@@ -478,8 +485,8 @@ class ModelFeatureMapsOnnx():
         kh = kernel_shape[3]
         kw = kernel_shape[4]
 
-        cin = kernel_shape[1] * groups
-        cout = kernel_shape[0]
+        cin = in_shape[1]
+        cout = out_shape[1]
 
         muls_unrl = kd * kh * kw * fine
         adds_unrl_1 = (kd * kh * kw - 1 ) * fine
@@ -493,17 +500,13 @@ class ModelFeatureMapsOnnx():
 
         # The convolution operation is a Layer and is composed of the following modules: Sliding window, Conv, Accumulator 
         # Rates for the SW module
-        if kd == 1 and kh == 1 and kw == 1:
-            rin_sw = 1
-            rout_sw = (dout*hout*wout)/(din*hin*win)
-        else:
-            rin_sw = 1
-            rout_sw = (dout*hout*wout)/(din*hin*win)
+        rin_sw = 1
+        rout_sw = (dout*hout*wout)/(din*hin*win)
         rates_graph[0,0] = rin_sw * coarse_in
         rates_graph[0,1] = rout_sw * (kd * kh * kw) * coarse_in
 
         rates_graph[1,1] = 1 * rates_graph[0,1]
-        rates_graph[1,2] = 1 * rates_graph[0,1] #* coarse_out
+        rates_graph[1,2] = 1 * rates_graph[0,1]
 
         # Rates for the Conv module
         rin_conv = (fine * groups * rates_graph[1,2] * coarse_out)/cout
@@ -547,7 +550,7 @@ class ModelFeatureMapsOnnx():
         else:
             # Plane buffer + Line buffer (needed in conjuction with plane buffer)
             pb = min((din*win*kh), (win*hin*kd)) + min((din*kw), (win*kh))
-            sw_depth = min(((din*win+padding[0]+padding[1]+padding[2])*(cin/coarse_in)*(kh-1))+(cin/coarse_in)*kh*(kh-1), ((win*hin+padding[0]+padding[1]+padding[2])*(cin/coarse_in)*(kd-1))+(cin/coarse_in)*kd*(kd-1))
+            sw_depth = min(((din*win+padding[0]+padding[1]+padding[2])*(cin/coarse_in)*(max(kh-1,1)))+(cin/coarse_in)*kh*(max(kh-1,1)), ((win*hin+padding[0]+padding[1]+padding[2])*(cin/coarse_in)*(max(kd-1,1)))+(cin/coarse_in)*kd*(max(kd-1,1)))
         kernel_size = int(np.prod(np.array(kernel_shape)))
 
         conv_depth = math.ceil(1/fine)
@@ -562,6 +565,7 @@ class ModelFeatureMapsOnnx():
         #TODO: This calculations are not correct. Need revision.
         adds = math.ceil(adds_unrl_1 * coarse_in * coarse_out) + math.ceil(adds_unrl_2 * coarse_in * coarse_out)
 
+        #TODO:Revise the case with channels and input shape onconvolutions with groups
         workload_in = cin*din*hin*win
         workload_out = cout*dout*hout*wout
         latency = max(workload_in/rate_in, workload_out/rate_out)
@@ -669,15 +673,22 @@ class ModelFeatureMapsOnnx():
         if se_on_bram == 1:
             mem += depth
     
-        latency = max(glavpool_latency, conv1_latency, conv2_latency)
+        workload_in = int(np.prod(np.array(glavpool_in_shape)))
+        workload_out = int(np.prod(np.array(glavpool_in_shape)))
+        latency = max(workload_in/rate_in, workload_out/rate_out)
         return rate_in, rate_out, muls, adds, mem, depth, latency, (mem_bounded_in, mem_bounded_out)
 
     def get_layer_from_id(self, layer_id):
         for k in self.layers.keys():
-            if layer_id == int(self.layers[k]['output_id']):
-                return self.layers[k], k
+            if isinstance(layer_id, int):
+                if layer_id == int(self.layers[k]['output_id']):
+                    return self.layers[k], k
+            else:
+                if layer_id == self.layers[k]['output_id']:
+                    return self.layers[k], k
         return None, None
-
+    
+    @timebudget
     def create_modules(self):
         se_module = deque(maxlen=6)
         swish_module = deque(maxlen=3)
@@ -700,7 +711,11 @@ class ModelFeatureMapsOnnx():
                 oldest_input = min(int(in1_layer['output_id']), int(in2_layer['output_id'])) if (in1_layer is not None and in2_layer is not None) else int(self.layers[k]['output_id'])
                 logging.info("Layer name = {} ({}). Input_0 = {} ({}). Input_1 = {} ({})".format(name, self.layers[k]['output_id'], in1_layer_name, self.layers[k]['input_id'][0], in2_layer_name, self.layers[k]['input_id'][1]))
             else:
-                in1_layer, in1_layer_name = self.get_layer_from_id(int(self.layers[k]['input_id'][0]))
+                if isinstance(self.layers[k]['input_id'][0], int):
+                    in_id = int(self.layers[k]['input_id'][0])
+                else:
+                    in_id = self.layers[k]['input_id'][0]
+                in1_layer, in1_layer_name = self.get_layer_from_id(in_id)
                 oldest_input = int(in1_layer['output_id']) if in1_layer is not None else int(self.layers[k]['output_id'])
                 logging.info("Layer name = {} ({}). Input = {} ({})".format(name, self.layers[k]['output_id'], in1_layer_name, self.layers[k]['input_id'][0]))
             #TODO: Should find a more generic way to detect and filter branching behaviours on networks.
@@ -966,12 +981,389 @@ class ModelFeatureMapsOnnx():
         assert math.isclose(thr_out, thr_in) or mem_bounded_out, "Input and Output Throughput doesnt match. Aborting..."
 
         if dsps_util < 90.0 and mem_util < 90.0:
-            csv_writer.writerow([layer, folding, mem_util, dsps_util, thr_in, thr_out, bw_in_w, bw_out_w, mem_kb, mem_bram, bw_in_gb, bw_out_gb, muls, adds, dsps, depth, latency, thr_w_out, thr_go, l_config])
-
-            logging.info("On Chip Mem (BRAM %) = {:<15.5f} DSPS % = {:<20.5f}\nConsumption(inputs/sec) = {:<20.5f} Throughtput(outputs/sec) = {:<20.5f}\nMemory Bandwidth In(words/cycle) = {:<20.5f} Memory Bandwidth Out(words/cycle) = {:<20.5f}\nOn-Chip Memory(KB) = {:<20.5f} On-Chip Memory(BRAM) = {:<20.5f} Adds = {:<20.5f} DSPS = {:<20.5f}\nMemory Bandwidth In(GBs/sec) = {:<20.5f} Memory Bandwidth Out(GBs/sec) = {:<20.5f}\nThroughtput(GOps/sec) = {:.3f}".format(mem_util, dsps_util, thr_in, thr_out, bw_in_w, bw_out_w, mem_kb, mem_bram, adds, dsps, bw_in_gb, bw_out_gb, thr_go))
+            logging.info("On Chip Mem (BRAM %) = {:<15.5f} DSPS % = {:<20.5f}\nConsumption(inputs/sec) = {:<20.5f} Throughtput(outputs/sec) = {:<20.5f}\nMemory Bandwidth In(words/cycle) = {:<20.5f} Memory Bandwidth Out(words/cycle) = {:<20.5f}\nOn-Chip Memory(KB) = {:<20.5f} On-Chip Memory(BRAM) = {:<20.5f} Adds = {:<20.5f} DSPS = {:<20.5f}\nMemory Bandwidth In(GBs/sec) = {:<20.5f} Memory Bandwidth Out(GBs/sec) = {:<20.5f}\nThroughtput(GOps/sec) = {:.3f}".format(mem_util, dsps_util, thr_in, thr_out, bw_in_w, bw_out_w, mem_kb, mem_bram, adds, dsps, bw_in_gb, bw_out_gb, thr_go))   
+            # csv_writer.writerow([layer, folding, mem_util, dsps_util, thr_in, thr_out, bw_in_w, bw_out_w, mem_kb, mem_bram, bw_in_gb, bw_out_gb, muls, adds, dsps, depth, latency, thr_w_out, thr_go, l_config])
+            return [layer, folding, mem_util, dsps_util, thr_in, thr_out, bw_in_w, bw_out_w, mem_kb, mem_bram, bw_in_gb, bw_out_gb, muls, adds, dsps, depth, latency, thr_w_out, thr_go, l_config]
         else:
-            logging.warning("Design point dropped because of too many recourses needed. DSPS = {} ({}%). BRAM = {} ({}%)".format(dsps, dsps_util, mem_bram, mem_util))
+            logging.info("Design point dropped because of too many recourses needed. DSPS = {} ({}%). BRAM = {} ({}%)".format(dsps, dsps_util, mem_bram, mem_util))
+            return None
+    
+    @ray.remote
+    @timebudget
+    def design_points_per_layer(self, operation, name, s_in=1, s_out=1):
+        # if not (operation == 'Conv'):
+        #     continue
+        layer_results = []
+        if operation == 'Conv':
+            out_shape = self.modules[name]['shape_out']
+            dout = out_shape[2]
+            hout = out_shape[3]
+            wout = out_shape[4]
 
+            in_shape = self.modules[name]['shape_in']
+            din = in_shape[2]
+            hin = in_shape[3]
+            win = in_shape[4]
+            
+            kernel_shape = self.modules[name]['kernel']
+            kd = kernel_shape[2]
+            kh = kernel_shape[3]
+            kw = kernel_shape[4]
+
+            groups = self.modules[name]['groups']
+            padding = self.modules[name]['padding']
+
+            cin = in_shape[1]
+            cout = out_shape[1]
+
+            #TODO: Check the case with groups and input channels on depthwise conv
+            in_size = cin * din * hin * win
+            out_size = cout * dout * hout * wout
+
+            pr_name = name
+
+            # if cout == groups:
+            #     pr_name = pr_name + "_DepthWise"
+            # if kd == 1 and kh == 1 and kw == 1:
+            #     pr_name = pr_name + "_PointWise"
+
+            coarse_in_config = [1, (cin)//4, (cin)//2, cin]
+            coarse_in_config = np.unique(coarse_in_config)
+            coarse_in_config = coarse_in_config[np.nonzero(coarse_in_config)].tolist()
+            coarse_out_config = [1, cout//4, cout//2, cout]
+            coarse_out_config = np.unique(coarse_out_config)
+            coarse_out_config = coarse_out_config[np.nonzero(coarse_out_config)].tolist()
+            max_fine = kd * kh * kw
+            fine_config = np.array([kd/max_fine, kh/max_fine, kw/max_fine, (kd * kh)/max_fine, (kh * kw)/max_fine, (kd * kw)/max_fine, 1])
+            fine_config = np.unique(fine_config).tolist()
+            if kd == 1 and kh == 1 and kw == 1:
+                fine_config = [0.5, 1]
+            
+            mem_bw_config = [((s_in+s_out)*0.25, (s_in+s_out)*0.75), ((s_in+s_out)*0.50, (s_in+s_out)*0.50), ((s_in+s_out)*0.75, (s_in+s_out)*0.25)]
+            for coarse_in in coarse_in_config:
+                for coarse_out in coarse_out_config:
+                    for fine in fine_config:
+                        for conv_bw_in, conv_bw_out in mem_bw_config:
+                            coarse_in_name = str(coarse_in)
+                            coarse_out_name = str(coarse_out)
+                            folding_name = "N_Coarse({}/{}) - f_Fine({:.2f}) - Mem BW({:.2f}/{:.2f})".format(coarse_in_name, coarse_out_name, fine, conv_bw_in, conv_bw_out)
+
+                            logging.info("Fold = {}. Channels In = {} - Filters = {}".format(folding_name, cin, cout))
+
+                            rate_in, rate_out, muls, adds, mem, depth, latency, (mem_bounded_in, mem_bounded_out) = self.conv_layer_config(in_shape, out_shape, kernel_shape, padding, groups, fine, coarse_in, coarse_out, s_in=conv_bw_in, s_out=conv_bw_out)
+
+                            current_config = [in_shape, out_shape, kernel_shape, padding, groups, fine, coarse_in, coarse_out, int(mem_bounded_in), int(mem_bounded_out)]
+                            curr_result = self.model_layer(pr_name, None, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, depth, latency, mem_bounded_out=mem_bounded_out, config=current_config)
+                            if curr_result is not None:
+                                layer_results.append(curr_result)
+
+        elif operation == 'SqueezeExcitation':
+            out_shape = self.modules[name]['shape_out']
+            cout = out_shape[1]
+            dout = out_shape[2]
+            hout = out_shape[3]
+            wout = out_shape[4]
+            out_size = cout * dout * hout * wout
+
+            in_shape = self.modules[name]['shape_in']
+            cin = in_shape[1]
+            din = in_shape[2]
+            hin = in_shape[3]
+            win = in_shape[4]
+            in_size = cin * din * hin * win
+
+            branch_shape = self.modules[name]['shape_branch']
+            cbr = branch_shape[1]
+            dbr = branch_shape[2]
+            hbr = branch_shape[3]
+            wbr = branch_shape[4]
+            br_size = cbr * dbr * hbr * wbr
+
+            se_keys = list(self.modules[name].keys())
+            glavpool_key = se_keys[4]
+            glavpool_in_shape = self.modules[name][glavpool_key]['shape_in']
+            coarse_gap_config = [1, glavpool_in_shape[1]//8, glavpool_in_shape[1]//4, glavpool_in_shape[1]//2, glavpool_in_shape[1]]
+            coarse_gap_config = np.unique(coarse_gap_config)
+            coarse_gap_config = coarse_gap_config[np.nonzero(coarse_gap_config)].tolist()
+
+            conv1_key = se_keys[5]
+            conv1_in_shape = self.modules[name][conv1_key]['shape_in']
+            conv1_out_shape = self.modules[name][conv1_key]['shape_out']
+            conv1_kernel_shape = self.modules[name][conv1_key]['kernel']
+            conv1_groups = self.modules[name][conv1_key]['groups']
+            conv1_padding = self.modules[name][conv1_key]['padding']
+
+            conv2_key = se_keys[7]
+            conv2_in_shape = self.modules[name][conv2_key]['shape_in']
+            conv2_out_shape = self.modules[name][conv2_key]['shape_out']
+            conv2_kernel_shape = self.modules[name][conv2_key]['kernel']
+            conv2_groups = self.modules[name][conv2_key]['groups']
+            conv2_padding = self.modules[name][conv2_key]['padding']
+
+            coarse_in_conv1 = conv1_kernel_shape[1]
+            coarse_out_conv1 = conv1_kernel_shape[0]
+
+            coarse_in_conv2 = conv2_kernel_shape[1]
+            coarse_out_conv2 = conv2_kernel_shape[0]
+
+            coarse_in_config_conv1 = [1, coarse_in_conv1//4, coarse_in_conv1//2, coarse_in_conv1]
+            coarse_in_config_conv1 = np.unique(coarse_in_config_conv1)
+            coarse_in_config_conv1 = coarse_in_config_conv1[np.nonzero(coarse_in_config_conv1)].tolist()
+
+            coarse_in_config_conv2 = [1, coarse_in_conv2//4, coarse_in_conv2//2, coarse_in_conv2]
+            coarse_in_config_conv2 = np.unique(coarse_in_config_conv2)
+            coarse_in_config_conv2 = coarse_in_config_conv2[np.nonzero(coarse_in_config_conv2)].tolist()
+
+            coarse_out_config_conv1 = [1, coarse_out_conv1//4, coarse_out_conv1//2, coarse_out_conv1]
+            coarse_out_config_conv1 = np.unique(coarse_out_config_conv1)
+            coarse_out_config_conv1 = coarse_out_config_conv1[np.nonzero(coarse_out_config_conv1)].tolist()
+
+            coarse_out_config_conv2 = [1, coarse_out_conv2//4, coarse_out_conv2//2, coarse_out_conv2]
+            coarse_out_config_conv2 = np.unique(coarse_out_config_conv2)
+            coarse_out_config_conv2 = coarse_out_config_conv2[np.nonzero(coarse_out_config_conv2)].tolist()
+            
+            kd_1 = conv1_kernel_shape[2]
+            kh_1 = conv1_kernel_shape[3]
+            kw_1 = conv1_kernel_shape[4]
+            max_fine = kd_1 * kh_1 * kw_1
+            fine_config_1 = np.array([kd_1/max_fine, kh_1/max_fine, kw_1/max_fine, (kd_1 * kh_1)/max_fine, (kh_1 * kw_1)/max_fine, (kd_1 * kw_1)/max_fine, 1])
+            fine_config_1 = np.unique(fine_config_1).tolist()
+            if kd_1 == 1 and kh_1 == 1 and kw_1 == 1:
+                fine_config_1 = [0.5, 1]
+
+            kd_2 = conv2_kernel_shape[2]
+            kh_2 = conv2_kernel_shape[3]
+            kw_2 = conv2_kernel_shape[4]
+            max_fine = kd_2 * kh_2 * kw_2
+            fine_config_2 = np.array([kd_2/max_fine, kh_2/max_fine, kw_2/max_fine, (kd_2 * kh_2)/max_fine, (kh_2 * kw_2)/max_fine, (kd_2 * kw_2)/max_fine, 1])
+            fine_config_2 = np.unique(fine_config_2).tolist()
+            if kd_2 == 1 and kh_2 == 1 and kw_2 == 1:
+                fine_config_2 = [0.5, 1]
+
+            mem_bw = s_in + s_out
+            mem_bw_config = [mem_bw*0.2, mem_bw*0.4, mem_bw*0.6, mem_bw*0.8, mem_bw*0.9]
+            for coarse_gap in coarse_gap_config:
+                for coarse_in_1 in coarse_in_config_conv1:
+                    for coarse_in_2 in coarse_in_config_conv2:
+                        for coarse_out_1 in coarse_out_config_conv1:
+                            for coarse_out_2 in coarse_out_config_conv2:
+                                for fine_1 in fine_config_1:
+                                    for fine_2 in fine_config_2:
+                                        for se_bw_in in mem_bw_config:
+                                            for se_on_bram in [0, 1]:
+
+                                                folding_name = "N_Coarse_1({}/{}) - N_Coarse_2({}/{}) - f_Fine_1({:.2f}) - f_Fine_2({:.2f}) - Mem BW IN {:.2f}".format(coarse_in_1, coarse_out_1, coarse_in_2, coarse_out_2, fine_1, fine_2, se_bw_in)
+                                                if se_on_bram:
+                                                    folding_name += " - BRAM"
+                                                logging.info("Fold = {}".format(folding_name))
+                                                
+                                                rate_in, rate_out, muls, adds, mem, depth, latency, (mem_bounded_in, mem_bounded_out) = self.se_layer_config(glavpool_in_shape, coarse_gap, conv1_in_shape, conv1_out_shape, conv1_kernel_shape, conv1_padding, conv1_groups, fine_1, coarse_in_1, coarse_out_1, conv2_in_shape, conv2_out_shape, conv2_kernel_shape, conv2_padding, conv2_groups, fine_2, coarse_in_2, coarse_out_2, bw_in=se_bw_in, bw_total=mem_bw, se_on_bram=se_on_bram)
+
+                                                #TODO: Added worst possible case for buffering on se module i.e., buffer the whole feature map and all of the channels. Should fix this by checking the depth/latency of the left branch in order to calculate the exact buffering that is gonna needed in each se module.
+                                                #TODO: Another solution is to read again from off-chip memory which will prevent the buffering i.e., reduce the BRAM needs BUT will reduce the mem bw in total as well since we need to first write the results (in a bigger layer-wise partition) and the read them again i.e., will probably need to have mem_bw / 4 instead of mem_bw / 2 in each point that we access the off-chip memory.
+
+                                                current_config = [glavpool_in_shape, coarse_gap, conv1_in_shape, conv1_out_shape, conv1_kernel_shape, conv1_padding, conv1_groups, fine_1, coarse_in_1, coarse_out_1, conv2_in_shape, conv2_out_shape, conv2_kernel_shape, conv2_padding, conv2_groups, fine_2, coarse_in_2, coarse_out_2, se_on_bram, int(mem_bounded_in), int(mem_bounded_out)]
+
+                                                curr_result = self.model_layer(name, None, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, depth, latency, mem_bounded_out=mem_bounded_out, config=current_config, inter_size=br_size, buffering_enabled=se_on_bram, module_mem_bw_in=se_bw_in)
+                                                if curr_result is not None:
+                                                    layer_results.append(curr_result)
+
+        elif operation == 'BatchNormalization':
+            out_shape = self.modules[name]['shape_out']
+            cout = out_shape[1]
+            out_size = int(np.prod(np.array(out_shape[1:])))
+
+            in_shape = self.modules[name]['shape_in']
+            cin = in_shape[1]
+            in_size = int(np.prod(np.array(in_shape[1:])))
+
+            assert out_shape == in_shape, 'Input and output shapes bust be identical in BatchNormalization Layer'
+
+            folding_name = "Mem_Bw({}/{})".format(s_in, s_out)
+
+            logging.info("Fold = {}. Channels In = {} - Filters = {}".format(folding_name, cin, cout))
+
+            rate_in, rate_out, muls, adds, mem = self.batchnorm_layer_config(in_shape, s_in=s_in, s_out=s_out)
+
+            curr_result = self.model_layer(name, None, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, 1, 1, config=[in_shape])
+            if curr_result is not None:
+                layer_results.append(curr_result) 
+
+        elif operation == 'Relu':
+            out_shape = self.modules[name]['shape_out']
+            cout = out_shape[1]
+            out_size = int(np.prod(np.array(out_shape[1:])))
+
+            in_shape = self.modules[name]['shape_in']
+            cin = in_shape[1]
+            in_size = int(np.prod(np.array(in_shape[1:])))
+
+            assert out_shape == in_shape, 'Input and output shapes bust be identical in Relu Layer'
+
+            folding_name = "Mem_Bw({}/{})".format(s_in, s_out)
+
+            logging.info("Fold = {}. Channels In = {} - Filters = {}".format(folding_name, cin, cout))
+
+            rate_in, rate_out, muls, adds, mem = self.relu_layer_config(s_in=s_in, s_out=s_out)
+
+            curr_result = self.model_layer(name, None, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, 1, 1)
+            if curr_result is not None:
+                layer_results.append(curr_result) 
+
+        elif operation == 'GlobalAveragePool':
+            out_shape = self.modules[name]['shape_out']
+            cout = out_shape[1]
+            out_size = int(np.prod(np.array(out_shape[1:])))
+
+            in_shape = self.modules[name]['shape_in']
+            cin = in_shape[1]
+            in_size = int(np.prod(np.array(in_shape[1:])))
+
+            assert cin == cout, 'Input and output channels bust be identical in GlobalAveragePool Layer'
+
+            gap_config = [1, (cin)//16, (cin)//12, (cin)//8, (cin)//4]
+
+            for gap_coarse in gap_config:
+                rate_in, rate_out, muls, adds, mem, depth, latency, (mem_bounded_in, mem_bounded_out) = self.gap_layer_config(in_shape, coarse=gap_coarse, s_in=s_in, s_out=s_out)
+
+                folding_name = "Coarse({:.2f}) - Mem_Bw({}/{})".format(gap_coarse, s_in, s_out)
+                logging.info("Fold = {}. Channels In = {} - Filters = {}".format(folding_name, cin, cout))
+
+                curr_result = self.model_layer(name, None, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, depth, latency, mem_bounded_out=mem_bounded_out, config=[in_shape, gap_coarse, int(mem_bounded_in), int(mem_bounded_out)])
+                if curr_result is not None:
+                    layer_results.append(curr_result) 
+
+        elif operation == 'Swish':
+            out_shape = self.modules[name]['shape_out']
+            cout = out_shape[1]
+            out_size = int(np.prod(np.array(out_shape[1:])))
+
+            in_shape = self.modules[name]['shape_in']
+            cin = in_shape[1]
+            in_size = int(np.prod(np.array(in_shape[1:])))
+
+            assert out_shape == in_shape, 'Input and output shapes bust be identical in Swish Layer'
+
+            folding_name = "Mem_Bw({}/{})".format(s_in, s_out)
+
+            logging.info("Fold = {}. Channels In = {} - Filters = {}".format(folding_name, cin, cout))
+
+            rate_in, rate_out, muls, adds, mem = self.swish_layer_config(s_in=s_in, s_out=s_out)
+
+            curr_result = self.model_layer(name, None, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, 1, 1)
+            if curr_result is not None:
+                layer_results.append(curr_result) 
+
+        elif operation == 'Add':
+            out_shape = self.modules[name]['shape_out']
+            cout = out_shape[1]
+            out_size = int(np.prod(np.array(out_shape[1:])))
+
+            in_shape = self.modules[name]['shape_in']
+            cin = in_shape[1]
+            in_size = int(np.prod(np.array(in_shape[1:])))
+
+            assert out_shape == in_shape, 'Input and output shapes bust be identical in Add Layer'
+
+            folding_name = "Mem_Bw({}/{})".format(s_in, s_out)
+
+            logging.info("Fold = {}. Channels In = {} - Filters = {}".format(folding_name, cin, cout))
+
+            rate_in, rate_out, muls, adds, mem = self.add_layer_config(s_in=s_in, s_out=s_out)
+
+            curr_result = self.model_layer(name, None, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, 1 ,1)
+            if curr_result is not None:
+                layer_results.append(curr_result) 
+
+        elif operation == 'Gemm' or operation == 'MatMul':
+            '''
+                The code below assumes the implementation of the fully connected layer as a 1x1 convolution with number of channels
+                equal to the size of the input tensor and number of filters equal to the size of the output tensor.
+            '''
+            '''
+            in_shape = self.modules[name]['shape_in'].copy()
+            in_shape.extend([1, 1, 1])
+            out_shape = self.modules[name]['shape_out'].copy()
+            out_shape.extend([1, 1, 1])
+            kernel_shape = self.modules[name]['kernel'].copy()
+            kernel_shape.extend([1, 1, 1])
+            padding = [0, 0, 0]
+            groups = 1
+            
+            in_size = in_shape[0] * in_shape[1]
+            out_size = out_shape[0] * out_shape[1]
+
+            coarse_in_fc = kernel_shape[1]
+            coarse_out_fc = kernel_shape[0]
+
+            coarse_in_config = [1, coarse_in_fc//4, coarse_in_fc//2, coarse_in_fc]
+            coarse_in_config = np.unique(coarse_in_config)
+            coarse_in_config = coarse_in_config[np.nonzero(coarse_in_config)].tolist()
+
+            coarse_out_config = [1, coarse_out_fc//4, coarse_out_fc//2, coarse_out_fc]
+            coarse_out_config = np.unique(coarse_out_config)
+            coarse_out_config = coarse_out_config[np.nonzero(coarse_out_config)].tolist()
+
+            fine_config = [0.5, 1]
+
+            mem_bw_config = [((s_in+s_out)*0.25, (s_in+s_out)*0.75), ((s_in+s_out)*0.50, (s_in+s_out)*0.50), ((s_in+s_out)*0.75, (s_in+s_out)*0.25)]
+            for coarse_in in coarse_in_config:
+                for coarse_out in coarse_out_config:
+                    for fine in fine_config:
+                        for conv_bw_in, conv_bw_out in mem_bw_config:
+                            coarse_in_name = str(coarse_in)
+                            coarse_out_name = str(coarse_out)
+                            folding_name = "N_Coarse({}/{}) - f_Fine({:.2f}) - Mem BW({:.2f}/{:.2f})".format(coarse_in_name, coarse_out_name, fine, conv_bw_in, conv_bw_out)
+
+                            logging.info("Fold = {}. Channels In = {} - Filters = {}".format(folding_name, coarse_in_fc, coarse_out_fc))
+
+                            rate_in, rate_out, muls, adds, mem, depth, (mem_bounded_in, mem_bounded_out) = self.conv_layer_config(in_shape, out_shape, kernel_shape, padding, groups, fine, coarse_in, coarse_out, s_in=conv_bw_in, s_out=conv_bw_out)
+
+                            current_config = [in_shape, out_shape, kernel_shape, padding, groups, fine, coarse_in, coarse_out, int(mem_bounded_in), int(mem_bounded_out)]
+                            curr_result = self.model_layer(name, None, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, mem_bounded_out=mem_bounded_out, config=current_config)
+                            if curr_result is not None:
+                                layer_results.append(curr_result) 
+            '''
+            '''
+                The code below models the fully connected layer as general matrix multiplication operation.
+            '''
+            in_shape = self.modules[name]['shape_in'].copy()
+            out_shape = self.modules[name]['shape_out'].copy()
+            kernel_shape = self.modules[name]['kernel'].copy()
+
+            # Here we pass the kernel size as in_size since we are streaming the kernel weights instead of the input tensor of the fully connected layer.
+            in_size = kernel_shape[0] * kernel_shape[1]
+            out_size = out_shape[0] * out_shape[1]
+
+            coarse_in_fc = kernel_shape[1]
+            coarse_out_fc = kernel_shape[0]
+
+            coarse_in_config = [1, coarse_in_fc//16, coarse_in_fc//12, coarse_in_fc//8, coarse_in_fc//4, coarse_in_fc]
+            coarse_in_config = np.unique(coarse_in_config)
+            coarse_in_config = coarse_in_config[np.nonzero(coarse_in_config)].tolist()
+
+            coarse_out_config = [1, coarse_out_fc//16, coarse_out_fc//12, coarse_out_fc//8, coarse_out_fc//4, coarse_out_fc]
+            coarse_out_config = np.unique(coarse_out_config)
+            coarse_out_config = coarse_out_config[np.nonzero(coarse_out_config)].tolist()
+
+            fine_config = [0.25, 0.5, 0.75, 1]
+
+            mem_bw_config = [((s_in+s_out)*0.25, (s_in+s_out)*0.75), ((s_in+s_out)*0.50, (s_in+s_out)*0.50), ((s_in+s_out)*0.75, (s_in+s_out)*0.25)]
+            for coarse_in in coarse_in_config:
+                for coarse_out in coarse_out_config:
+                    for fine in fine_config:
+                        for fc_bw_in, fc_bw_out in mem_bw_config:
+                            folding_name = "N_Coarse({}/{}) - f_Fine({:.2f}) - Mem BW({:.2f}/{:.2f})".format(coarse_in, coarse_out, fine, fc_bw_in, fc_bw_out)
+                            logging.info("Fold = {}. Tensor In = {} - Tensor Out = {}".format(folding_name, coarse_in_fc, coarse_out_fc))
+
+                            rate_in, rate_out, muls, adds, mem, depth, latency, (mem_bounded_in, mem_bounded_out) = self.fc_layer_config(in_shape, out_shape, fine, coarse_in, coarse_out, s_in=s_in, s_out=s_out)
+
+                            curr_result = self.model_layer(name, None, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, depth, latency, mem_bounded_out=mem_bounded_out, config=[in_shape, out_shape, fine, coarse_in, coarse_out, int(mem_bounded_in), int(mem_bounded_out)])
+                            if curr_result is not None:
+                                layer_results.append(curr_result) 
+        return layer_results
+
+    @timebudget
     def create_design_points(self, file_name, s_in=1, s_out=1):
             if not os.path.exists(os.path.join(os.getcwd(), 'fpga_modeling_reports')):
                 os.makedirs(os.path.join(os.getcwd(), 'fpga_modeling_reports'))
@@ -981,362 +1373,16 @@ class ModelFeatureMapsOnnx():
 
                 csv_writer.writerow(["Layer", "Folding", "On-Chip Memory(BRAM %)", "DSPS %", "Consumption(inputs/sec)", "Throughtput(outputs/sec)", "Memory Bandwidth In(words/cycle)", "Memory Bandwidth Out(words/cycle)", "On-Chip Memory(KB)", "On-Chip Memory(BRAM)", "Memory Bandwidth In(GBs/sec)", "Memory Bandwidth Out(GBs/sec)", "Multipliers", "Adders", "DSPS", "Depth", "Latency", "Throughtput(words/cycle)", "Throughtput(GOps/sec)", "Configuration"])
 
+                result_ids = []
                 for k in self.modules.keys():
                     name = k
                     operation = self.modules[k]['operation']
                     logging.warning("Layer: {} -> Operation: {}.".format(name, operation))
-
-                    # if not (operation == 'Conv'):
-                    #     continue
-                    if operation == 'Conv':
-                        out_shape = self.modules[name]['shape_out']
-                        dout = out_shape[2]
-                        hout = out_shape[3]
-                        wout = out_shape[4]
-
-                        in_shape = self.modules[name]['shape_in']
-                        din = in_shape[2]
-                        hin = in_shape[3]
-                        win = in_shape[4]
-                        
-                        kernel_shape = self.modules[name]['kernel']
-                        kd = kernel_shape[2]
-                        kh = kernel_shape[3]
-                        kw = kernel_shape[4]
-
-                        groups = self.modules[name]['groups']
-                        padding = self.modules[name]['padding']
-
-                        cin = kernel_shape[1] * groups
-                        cout = kernel_shape[0]
-
-                        in_size = cin * din * hin * win
-                        out_size = cout * dout * hout * wout
-
-                        pr_name = name
-
-                        # if cout == groups:
-                        #     pr_name = pr_name + "_DepthWise"
-                        # if kd == 1 and kh == 1 and kw == 1:
-                        #     pr_name = pr_name + "_PointWise"
-
-                        coarse_in_config = [1, (cin)//4, (cin)//2, cin]
-                        coarse_in_config = np.unique(coarse_in_config)
-                        coarse_in_config = coarse_in_config[np.nonzero(coarse_in_config)].tolist()
-                        coarse_out_config = [1, cout//4, cout//2, cout]
-                        coarse_out_config = np.unique(coarse_out_config)
-                        coarse_out_config = coarse_out_config[np.nonzero(coarse_out_config)].tolist()
-                        max_fine = kd * kh * kw
-                        fine_config = np.array([kd/max_fine, kh/max_fine, kw/max_fine, (kd * kh)/max_fine, (kh * kw)/max_fine, (kd * kw)/max_fine, 1])
-                        fine_config = np.unique(fine_config).tolist()
-                        if kd == 1 and kh == 1 and kw == 1:
-                            fine_config = [0.5, 1]
-                        
-                        mem_bw_config = [((s_in+s_out)*0.25, (s_in+s_out)*0.75), ((s_in+s_out)*0.50, (s_in+s_out)*0.50), ((s_in+s_out)*0.75, (s_in+s_out)*0.25)]
-                        for coarse_in in coarse_in_config:
-                            for coarse_out in coarse_out_config:
-                                for fine in fine_config:
-                                    for conv_bw_in, conv_bw_out in mem_bw_config:
-                                        coarse_in_name = str(coarse_in)
-                                        coarse_out_name = str(coarse_out)
-                                        folding_name = "N_Coarse({}/{}) - f_Fine({:.2f}) - Mem BW({:.2f}/{:.2f})".format(coarse_in_name, coarse_out_name, fine, conv_bw_in, conv_bw_out)
-
-                                        logging.info("Fold = {}. Channels In = {} - Filters = {}".format(folding_name, cin, cout))
-
-                                        rate_in, rate_out, muls, adds, mem, depth, latency, (mem_bounded_in, mem_bounded_out) = self.conv_layer_config(in_shape, out_shape, kernel_shape, padding, groups, fine, coarse_in, coarse_out, s_in=conv_bw_in, s_out=conv_bw_out)
-
-                                        current_config = [in_shape, out_shape, kernel_shape, padding, groups, fine, coarse_in, coarse_out, int(mem_bounded_in), int(mem_bounded_out)]
-                                        self.model_layer(pr_name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, depth, latency, mem_bounded_out=mem_bounded_out, config=current_config)
-
-                    elif operation == 'SqueezeExcitation':
-                        out_shape = self.modules[name]['shape_out']
-                        cout = out_shape[1]
-                        dout = out_shape[2]
-                        hout = out_shape[3]
-                        wout = out_shape[4]
-                        out_size = cout * dout * hout * wout
-
-                        in_shape = self.modules[name]['shape_in']
-                        cin = in_shape[1]
-                        din = in_shape[2]
-                        hin = in_shape[3]
-                        win = in_shape[4]
-                        in_size = cin * din * hin * win
-
-                        branch_shape = self.modules[name]['shape_branch']
-                        cbr = branch_shape[1]
-                        dbr = branch_shape[2]
-                        hbr = branch_shape[3]
-                        wbr = branch_shape[4]
-                        br_size = cbr * dbr * hbr * wbr
-
-                        se_keys = list(self.modules[name].keys())
-                        glavpool_key = se_keys[4]
-                        glavpool_in_shape = self.modules[name][glavpool_key]['shape_in']
-                        coarse_gap_config = [1, glavpool_in_shape[1]//8, glavpool_in_shape[1]//4, glavpool_in_shape[1]//2, glavpool_in_shape[1]]
-                        coarse_gap_config = np.unique(coarse_gap_config)
-                        coarse_gap_config = coarse_gap_config[np.nonzero(coarse_gap_config)].tolist()
-
-                        conv1_key = se_keys[5]
-                        conv1_in_shape = self.modules[name][conv1_key]['shape_in']
-                        conv1_out_shape = self.modules[name][conv1_key]['shape_out']
-                        conv1_kernel_shape = self.modules[name][conv1_key]['kernel']
-                        conv1_groups = self.modules[name][conv1_key]['groups']
-                        conv1_padding = self.modules[name][conv1_key]['padding']
-
-                        conv2_key = se_keys[7]
-                        conv2_in_shape = self.modules[name][conv2_key]['shape_in']
-                        conv2_out_shape = self.modules[name][conv2_key]['shape_out']
-                        conv2_kernel_shape = self.modules[name][conv2_key]['kernel']
-                        conv2_groups = self.modules[name][conv2_key]['groups']
-                        conv2_padding = self.modules[name][conv2_key]['padding']
-
-                        coarse_in_conv1 = conv1_kernel_shape[1]
-                        coarse_out_conv1 = conv1_kernel_shape[0]
-
-                        coarse_in_conv2 = conv2_kernel_shape[1]
-                        coarse_out_conv2 = conv2_kernel_shape[0]
-
-                        coarse_in_config_conv1 = [1, coarse_in_conv1//4, coarse_in_conv1//2, coarse_in_conv1]
-                        coarse_in_config_conv1 = np.unique(coarse_in_config_conv1)
-                        coarse_in_config_conv1 = coarse_in_config_conv1[np.nonzero(coarse_in_config_conv1)].tolist()
-
-                        coarse_in_config_conv2 = [1, coarse_in_conv2//4, coarse_in_conv2//2, coarse_in_conv2]
-                        coarse_in_config_conv2 = np.unique(coarse_in_config_conv2)
-                        coarse_in_config_conv2 = coarse_in_config_conv2[np.nonzero(coarse_in_config_conv2)].tolist()
-
-                        coarse_out_config_conv1 = [1, coarse_out_conv1//4, coarse_out_conv1//2, coarse_out_conv1]
-                        coarse_out_config_conv1 = np.unique(coarse_out_config_conv1)
-                        coarse_out_config_conv1 = coarse_out_config_conv1[np.nonzero(coarse_out_config_conv1)].tolist()
-
-                        coarse_out_config_conv2 = [1, coarse_out_conv2//4, coarse_out_conv2//2, coarse_out_conv2]
-                        coarse_out_config_conv2 = np.unique(coarse_out_config_conv2)
-                        coarse_out_config_conv2 = coarse_out_config_conv2[np.nonzero(coarse_out_config_conv2)].tolist()
-                      
-                        kd_1 = conv1_kernel_shape[2]
-                        kh_1 = conv1_kernel_shape[3]
-                        kw_1 = conv1_kernel_shape[4]
-                        max_fine = kd_1 * kh_1 * kw_1
-                        fine_config_1 = np.array([kd_1/max_fine, kh_1/max_fine, kw_1/max_fine, (kd_1 * kh_1)/max_fine, (kh_1 * kw_1)/max_fine, (kd_1 * kw_1)/max_fine, 1])
-                        fine_config_1 = np.unique(fine_config_1).tolist()
-                        if kd_1 == 1 and kh_1 == 1 and kw_1 == 1:
-                            fine_config_1 = [0.5, 1]
-
-                        kd_2 = conv2_kernel_shape[2]
-                        kh_2 = conv2_kernel_shape[3]
-                        kw_2 = conv2_kernel_shape[4]
-                        max_fine = kd_2 * kh_2 * kw_2
-                        fine_config_2 = np.array([kd_2/max_fine, kh_2/max_fine, kw_2/max_fine, (kd_2 * kh_2)/max_fine, (kh_2 * kw_2)/max_fine, (kd_2 * kw_2)/max_fine, 1])
-                        fine_config_2 = np.unique(fine_config_2).tolist()
-                        if kd_2 == 1 and kh_2 == 1 and kw_2 == 1:
-                            fine_config_2 = [0.5, 1]
-
-                        mem_bw = s_in + s_out
-                        mem_bw_config = [mem_bw*0.2, mem_bw*0.4, mem_bw*0.6, mem_bw*0.8, mem_bw*0.9]
-                        for coarse_gap in coarse_gap_config:
-                            for coarse_in_1 in coarse_in_config_conv1:
-                                for coarse_in_2 in coarse_in_config_conv2:
-                                    for coarse_out_1 in coarse_out_config_conv1:
-                                        for coarse_out_2 in coarse_out_config_conv2:
-                                            for fine_1 in fine_config_1:
-                                                for fine_2 in fine_config_2:
-                                                    for se_bw_in in mem_bw_config:
-                                                        for se_on_bram in [0, 1]:
-
-                                                            folding_name = "N_Coarse_1({}/{}) - N_Coarse_2({}/{}) - f_Fine_1({:.2f}) - f_Fine_2({:.2f}) - Mem BW IN {:.2f}".format(coarse_in_1, coarse_out_1, coarse_in_2, coarse_out_2, fine_1, fine_2, se_bw_in)
-                                                            if se_on_bram:
-                                                                folding_name += " - BRAM"
-                                                            logging.info("Fold = {}".format(folding_name))
-                                                            
-                                                            rate_in, rate_out, muls, adds, mem, depth, latency, (mem_bounded_in, mem_bounded_out) = self.se_layer_config(glavpool_in_shape, coarse_gap, conv1_in_shape, conv1_out_shape, conv1_kernel_shape, conv1_padding, conv1_groups, fine_1, coarse_in_1, coarse_out_1, conv2_in_shape, conv2_out_shape, conv2_kernel_shape, conv2_padding, conv2_groups, fine_2, coarse_in_2, coarse_out_2, bw_in=se_bw_in, bw_total=mem_bw, se_on_bram=se_on_bram)
-            
-                                                            #TODO: Added worst possible case for buffering on se module i.e., buffer the whole feature map and all of the channels. Should fix this by checking the depth/latency of the left branch in order to calculate the exact buffering that is gonna needed in each se module.
-                                                            #TODO: Another solution is to read again from off-chip memory which will prevent the buffering i.e., reduce the BRAM needs BUT will reduce the mem bw in total as well since we need to first write the results (in a bigger layer-wise partition) and the read them again i.e., will probably need to have mem_bw / 4 instead of mem_bw / 2 in each point that we access the off-chip memory.
-
-                                                            current_config = [glavpool_in_shape, coarse_gap, conv1_in_shape, conv1_out_shape, conv1_kernel_shape, conv1_padding, conv1_groups, fine_1, coarse_in_1, coarse_out_1, conv2_in_shape, conv2_out_shape, conv2_kernel_shape, conv2_padding, conv2_groups, fine_2, coarse_in_2, coarse_out_2, se_on_bram, int(mem_bounded_in), int(mem_bounded_out)]
-
-                                                            self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, depth, latency, mem_bounded_out=mem_bounded_out, config=current_config, inter_size=br_size, buffering_enabled=se_on_bram, module_mem_bw_in=se_bw_in)
-
-                    elif operation == 'BatchNormalization':
-                        out_shape = self.modules[name]['shape_out']
-                        cout = out_shape[1]
-                        out_size = int(np.prod(np.array(out_shape[1:])))
-
-                        in_shape = self.modules[name]['shape_in']
-                        cin = in_shape[1]
-                        in_size = int(np.prod(np.array(in_shape[1:])))
-
-                        assert out_shape == in_shape, 'Input and output shapes bust be identical in BatchNormalization Layer'
-
-                        folding_name = "Mem_Bw({}/{})".format(s_in, s_out)
-
-                        logging.info("Fold = {}. Channels In = {} - Filters = {}".format(folding_name, cin, cout))
-
-                        rate_in, rate_out, muls, adds, mem = self.batchnorm_layer_config(in_shape, s_in=s_in, s_out=s_out)
-
-                        self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, 1, 1, config=[in_shape])
-
-                    elif operation == 'Relu':
-                        out_shape = self.modules[name]['shape_out']
-                        cout = out_shape[1]
-                        out_size = int(np.prod(np.array(out_shape[1:])))
-
-                        in_shape = self.modules[name]['shape_in']
-                        cin = in_shape[1]
-                        in_size = int(np.prod(np.array(in_shape[1:])))
-
-                        assert out_shape == in_shape, 'Input and output shapes bust be identical in Relu Layer'
-
-                        folding_name = "Mem_Bw({}/{})".format(s_in, s_out)
-
-                        logging.info("Fold = {}. Channels In = {} - Filters = {}".format(folding_name, cin, cout))
-
-                        rate_in, rate_out, muls, adds, mem = self.relu_layer_config(s_in=s_in, s_out=s_out)
-
-                        self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, 1, 1)
-
-                    elif operation == 'GlobalAveragePool':
-                        out_shape = self.modules[name]['shape_out']
-                        cout = out_shape[1]
-                        out_size = int(np.prod(np.array(out_shape[1:])))
-
-                        in_shape = self.modules[name]['shape_in']
-                        cin = in_shape[1]
-                        in_size = int(np.prod(np.array(in_shape[1:])))
-
-                        assert cin == cout, 'Input and output channels bust be identical in GlobalAveragePool Layer'
-
-                        logging.info("Fold = {}. Channels In = {} - Filters = {}".format(folding_name, cin, cout))
-
-                        gap_config = [1, (cin)//16, (cin)//12, (cin)//8, (cin)//4]
-
-                        for gap_coarse in gap_config:
-                            rate_in, rate_out, muls, adds, mem, depth, latency, (mem_bounded_in, mem_bounded_out) = self.gap_layer_config(in_shape, coarse=gap_coarse, s_in=s_in, s_out=s_out)
-
-                            folding_name = "Coarse({:.2f}) - Mem_Bw({}/{})".format(gap_coarse, s_in, s_out)
-
-                            self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, depth, latency, mem_bounded_out=mem_bounded_out, config=[in_shape, gap_coarse, int(mem_bounded_in), int(mem_bounded_out)])
-
-                    elif operation == 'Swish':
-                        out_shape = self.modules[name]['shape_out']
-                        cout = out_shape[1]
-                        out_size = int(np.prod(np.array(out_shape[1:])))
-
-                        in_shape = self.modules[name]['shape_in']
-                        cin = in_shape[1]
-                        in_size = int(np.prod(np.array(in_shape[1:])))
-
-                        assert out_shape == in_shape, 'Input and output shapes bust be identical in Swish Layer'
-
-                        folding_name = "Mem_Bw({}/{})".format(s_in, s_out)
-
-                        logging.info("Fold = {}. Channels In = {} - Filters = {}".format(folding_name, cin, cout))
-
-                        rate_in, rate_out, muls, adds, mem = self.swish_layer_config(s_in=s_in, s_out=s_out)
-
-                        self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, 1, 1)
-
-                    elif operation == 'Add':
-                        out_shape = self.modules[name]['shape_out']
-                        cout = out_shape[1]
-                        out_size = int(np.prod(np.array(out_shape[1:])))
-
-                        in_shape = self.modules[name]['shape_in']
-                        cin = in_shape[1]
-                        in_size = int(np.prod(np.array(in_shape[1:])))
-
-                        assert out_shape == in_shape, 'Input and output shapes bust be identical in Add Layer'
-
-                        folding_name = "Mem_Bw({}/{})".format(s_in, s_out)
-
-                        logging.info("Fold = {}. Channels In = {} - Filters = {}".format(folding_name, cin, cout))
-
-                        rate_in, rate_out, muls, adds, mem = self.add_layer_config(s_in=s_in, s_out=s_out)
-
-                        self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, 1 ,1)
-
-                    elif operation == 'Gemm' or operation == 'MatMul':
-                        '''
-                            The code below assumes the implementation of the fully connected layer as a 1x1 convolution with number of channels
-                            equal to the size of the input tensor and number of filters equal to the size of the output tensor.
-                        '''
-                        '''
-                        in_shape = self.modules[name]['shape_in'].copy()
-                        in_shape.extend([1, 1, 1])
-                        out_shape = self.modules[name]['shape_out'].copy()
-                        out_shape.extend([1, 1, 1])
-                        kernel_shape = self.modules[name]['kernel'].copy()
-                        kernel_shape.extend([1, 1, 1])
-                        padding = [0, 0, 0]
-                        groups = 1
-                        
-                        in_size = in_shape[0] * in_shape[1]
-                        out_size = out_shape[0] * out_shape[1]
-
-                        coarse_in_fc = kernel_shape[1]
-                        coarse_out_fc = kernel_shape[0]
-
-                        coarse_in_config = [1, coarse_in_fc//4, coarse_in_fc//2, coarse_in_fc]
-                        coarse_in_config = np.unique(coarse_in_config)
-                        coarse_in_config = coarse_in_config[np.nonzero(coarse_in_config)].tolist()
-
-                        coarse_out_config = [1, coarse_out_fc//4, coarse_out_fc//2, coarse_out_fc]
-                        coarse_out_config = np.unique(coarse_out_config)
-                        coarse_out_config = coarse_out_config[np.nonzero(coarse_out_config)].tolist()
-
-                        fine_config = [0.5, 1]
-
-                        mem_bw_config = [((s_in+s_out)*0.25, (s_in+s_out)*0.75), ((s_in+s_out)*0.50, (s_in+s_out)*0.50), ((s_in+s_out)*0.75, (s_in+s_out)*0.25)]
-                        for coarse_in in coarse_in_config:
-                            for coarse_out in coarse_out_config:
-                                for fine in fine_config:
-                                    for conv_bw_in, conv_bw_out in mem_bw_config:
-                                        coarse_in_name = str(coarse_in)
-                                        coarse_out_name = str(coarse_out)
-                                        folding_name = "N_Coarse({}/{}) - f_Fine({:.2f}) - Mem BW({:.2f}/{:.2f})".format(coarse_in_name, coarse_out_name, fine, conv_bw_in, conv_bw_out)
-
-                                        logging.info("Fold = {}. Channels In = {} - Filters = {}".format(folding_name, coarse_in_fc, coarse_out_fc))
-
-                                        rate_in, rate_out, muls, adds, mem, depth, (mem_bounded_in, mem_bounded_out) = self.conv_layer_config(in_shape, out_shape, kernel_shape, padding, groups, fine, coarse_in, coarse_out, s_in=conv_bw_in, s_out=conv_bw_out)
-
-                                        current_config = [in_shape, out_shape, kernel_shape, padding, groups, fine, coarse_in, coarse_out, int(mem_bounded_in), int(mem_bounded_out)]
-                                        self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, mem_bounded_out=mem_bounded_out, config=current_config)
-                        '''
-                        '''
-                            The code below models the fully connected layer as general matrix multiplication operation.
-                        '''
-                        in_shape = self.modules[name]['shape_in'].copy()
-                        out_shape = self.modules[name]['shape_out'].copy()
-                        kernel_shape = self.modules[name]['kernel'].copy()
-
-                        # Here we pass the kernel size as in_size since we are streaming the kernel weights instead of the input tensor of the fully connected layer.
-                        in_size = kernel_shape[0] * kernel_shape[1]
-                        out_size = out_shape[0] * out_shape[1]
-
-                        coarse_in_fc = kernel_shape[1]
-                        coarse_out_fc = kernel_shape[0]
-
-                        coarse_in_config = [1, coarse_in_fc//16, coarse_in_fc//12, coarse_in_fc//8, coarse_in_fc//4, coarse_in_fc]
-                        coarse_in_config = np.unique(coarse_in_config)
-                        coarse_in_config = coarse_in_config[np.nonzero(coarse_in_config)].tolist()
-
-                        coarse_out_config = [1, coarse_out_fc//16, coarse_out_fc//12, coarse_out_fc//8, coarse_out_fc//4, coarse_out_fc]
-                        coarse_out_config = np.unique(coarse_out_config)
-                        coarse_out_config = coarse_out_config[np.nonzero(coarse_out_config)].tolist()
-
-                        fine_config = [0.25, 0.5, 0.75, 1]
-
-                        mem_bw_config = [((s_in+s_out)*0.25, (s_in+s_out)*0.75), ((s_in+s_out)*0.50, (s_in+s_out)*0.50), ((s_in+s_out)*0.75, (s_in+s_out)*0.25)]
-                        for coarse_in in coarse_in_config:
-                            for coarse_out in coarse_out_config:
-                                for fine in fine_config:
-                                    for fc_bw_in, fc_bw_out in mem_bw_config:
-                                        folding_name = "N_Coarse({}/{}) - f_Fine({:.2f}) - Mem BW({:.2f}/{:.2f})".format(coarse_in, coarse_out, fine, fc_bw_in, fc_bw_out)
-                                        logging.info("Fold = {}. Tensor In = {} - Tensor Out = {}".format(folding_name, coarse_in_fc, coarse_out_fc))
-
-                                        rate_in, rate_out, muls, adds, mem, depth, latency, (mem_bounded_in, mem_bounded_out) = self.fc_layer_config(in_shape, out_shape, fine, coarse_in, coarse_out, s_in=s_in, s_out=s_out)
-
-                                        self.model_layer(name, csv_writer, folding_name, in_size, out_size, rate_in, rate_out, muls, adds, mem, depth, latency, mem_bounded_out=mem_bounded_out, config=[in_shape, out_shape, fine, coarse_in, coarse_out, int(mem_bounded_in), int(mem_bounded_out)])
+                    result_ids.append(self.design_points_per_layer.remote(self, operation=operation, name=name, s_in=s_in, s_out=s_out))
+                results = ray.get(result_ids)
+                for layer in results:
+                    for config in layer:
+                        csv_writer.writerow(config)
 
     def product_dict(self, **kwargs):
         keys = kwargs.keys()
@@ -1405,10 +1451,11 @@ class ModelFeatureMapsOnnx():
 
         return rate_in, rate_out, muls, adds, mem, depth, latency, tmp_thr_in, tmp_thr_out
 
+    @timebudget
     def non_branching_layer(self, layer_keys, r, membw, dsp_config, depth_config, latency_config, bram_config, bram_total_util, mem_bw_status, throughput_config, params_config):
         #TODO: This is a hardcoded version of supporting the x3d_m classifier. Should be revised in the future for a more generic implementation.
         classifier = False
-        if self.model_name == 'x3d_m' and layer_keys == ['Relu_407', 'Conv_408', 'BatchNormalization_409', 'Relu_410', 'GlobalAveragePool_411', 'MatMul_421', 'Relu_422', 'Gemm_423']:
+        if self.model_name == 'x3d_m' and layer_keys == ['Relu_387', 'Conv_388', 'BatchNormalization_389', 'Relu_390', 'GlobalAveragePool_391', 'MatMul_401', 'Relu_402', 'Gemm_403']:
             classifier = True
 
         in_shape = self.modules[layer_keys[0]]['shape_in']
@@ -1473,17 +1520,16 @@ class ModelFeatureMapsOnnx():
                     param_dict["coarse"] = r[k][-1][1]
                     params_per_module[k] = param_dict
 
-                if classifier and k == 'MatMul_421':
+                if classifier and k == 'MatMul_401':
                     fc1_thr_in = mod_thrin
                     fc1_thr_out = mod_throut
-                if classifier and k == 'Gemm_423':
+                if classifier and k == 'Gemm_403':
                     fc2_thr_in = mod_thrin
                     fc2_thr_out = mod_throut
 
                 rate_graph[i,i] = mod_rin
                 rate_graph[i,i+1] = mod_rout
 
-                total_latency = max(total_latency, mod_latency)
                 total_depth += mod_depth
                 total_mem += mod_mem
                 total_muls += mod_muls
@@ -1501,7 +1547,7 @@ class ModelFeatureMapsOnnx():
             
             if classifier:
                 rate_graph = rate_graph[:5,:6]
-                out_size = r['GlobalAveragePool_411'][-1][0][1]
+                out_size = r['GlobalAveragePool_391'][-1][0][1]
                 
             rate_graph = self.balance_module_rates(rate_graph)
 
@@ -1552,16 +1598,22 @@ class ModelFeatureMapsOnnx():
                 mem_bw_status.append("Memory Bounded OUT")
             else:
                 mem_bw_status.append("Compute Bounded")
+            
+            workload_in = int(np.prod(np.array(in_shape)))
+            workload_out = int(np.prod(np.array(out_shape)))
+            total_latency = max(workload_in/rate_in, workload_out/rate_out)
             latency_config.append(total_latency)
             depth_config.append(total_depth)
             dsp_config.append(dsps_util)
             bram_total_util.append(bram_util)
             throughput_config.append(thr_out)
             params_config.append(json.dumps(params_per_module))
-        
-    def compose_layers(self, file_name, layers_names, final_name, model_name, calculate_pareto, membw, branch_on_bram):
+
+    @ray.remote
+    @timebudget     
+    def compose_layers(self, file_name, layers_names, final_name, model_name, calculate_pareto, membw, branch_on_bram, plot_design_points=False):
         sns.set(rc={'figure.figsize':(15,8)})
-        sns.set_style("darkgrid", {"axes.facecolor": ".85"})
+        sns.set_style("whitegrid")
 
         l_configs = {}
         for l in layers_names:
@@ -1585,7 +1637,7 @@ class ModelFeatureMapsOnnx():
                             l_configs[l].append([row[cols['Folding']], json.loads(row[cols['Configuration']])])
                         else:
                             l_configs[l].append([row[cols['Folding']], row[cols['Configuration']]])
-        
+
         sizes = []
         keys = []
         for k in l_configs.keys():
@@ -1603,7 +1655,7 @@ class ModelFeatureMapsOnnx():
 
         res = list(self.product_dict(**l_configs))
         
-        for r in tqdm(res, leave=False):
+        for r in res:
             layer_keys = list(r.keys())
             se_layer_key = None
             se_layer_bwin = 0
@@ -1612,9 +1664,10 @@ class ModelFeatureMapsOnnx():
             branches_points = [i for i in range(len(layer_keys)) if self.modules[layer_keys[i]]['branching'] and not layer_keys[i].split("_")[0] == "Se"]
             if len(branches_points) == 0:
                 self.non_branching_layer(layer_keys, r, membw, dsp_config, depth_config, latency_config, bram_config, bram_total_util, mem_bw_status, throughput_config, params_config)
+                throughput_config, dsp_config, bram_total_util, mem_bw_status, depth_config, latency_config, params_config
                 continue
 
-            # in_shape = self.modules[layer_keys[0]]['shape_in']
+            in_shape_wl = self.modules[layer_keys[0]]['shape_in']
             in_shape = self.modules[layer_keys[-1]]['shape_in']
             in_size = int(np.prod(np.array(in_shape[1:])))
             out_shape = self.modules[layer_keys[-1]]['shape_out']
@@ -1682,7 +1735,6 @@ class ModelFeatureMapsOnnx():
                         rates_graph_list[rg_idx][i,i] = mod_rin
                         rates_graph_list[rg_idx][i,i+1] = mod_rout
 
-                        total_latency = max(total_latency, mod_latency)
                         total_depth += mod_depth
                         total_mem += mod_mem
                         total_muls += mod_muls
@@ -1728,7 +1780,6 @@ class ModelFeatureMapsOnnx():
                     final_layer = layer_keys[branches_points[-1]]
                     mod_rin, mod_rout, mod_muls, mod_adds, mod_mem, mod_depth, mod_latency, mod_thrin, mod_throut = self.get_rates(final_layer, r[final_layer][-1], rate_in, membw, mem_on_chip_bw)
                     
-                    total_latency = max(total_latency, mod_latency)
                     total_depth += mod_depth
                     total_mem += mod_mem
                     total_muls += mod_muls
@@ -1767,8 +1818,7 @@ class ModelFeatureMapsOnnx():
 
                     final_layer = layer_keys[branches_points[-1]]
                     mod_rin, mod_rout, mod_muls, mod_adds, mod_mem, mod_depth, mod_latency, mod_thrin, mod_throut = self.get_rates(final_layer, r[final_layer][-1], rate_in, membw, mem_on_chip_bw)
-                    
-                    total_latency = max(total_latency, mod_latency)
+
                     total_depth += mod_depth
                     total_mem += mod_mem
                     total_muls += mod_muls
@@ -1821,6 +1871,10 @@ class ModelFeatureMapsOnnx():
                     mem_bw_status.append("Memory Bounded OUT")
                 else:
                     mem_bw_status.append("Compute Bounded")
+                
+                workload_in = int(np.prod(np.array(in_shape_wl)))
+                workload_out = int(np.prod(np.array(out_shape)))
+                total_latency = max(workload_in/rate_in, workload_out/rate_out)
                 latency_config.append(total_latency)
                 depth_config.append(total_depth)
                 dsp_config.append(dsps_util)
@@ -1874,23 +1928,24 @@ class ModelFeatureMapsOnnx():
             if final_name == 1:
                 csv_writer.writerow(["Layer Name", "Latency(cycles new)", "Latency(cycles/output)", "Throughput(outputs/sec)", "Latency(secs/output)", "DSPs(%)", "BRAM(%)", "Memory BW Status", "Pipeline Depth", "Modules Parameters"])
             interval = math.ceil(1/(max_throughput/self.cycles_per_sec))
-            csv_writer.writerow([final_name, int(best_latency), interval, max_throughput, 1/max_throughput, best_dsp, best_bram, best_bw_stat, best_depth, best_params])
-        logging.warning("Best config for layer {}. Latency(cycles new) = {}, Latency(cycles/output) = {}, Throughput(outputs/sec) = {:.5f}, Latency(secs/output) = {:.5f}, DSPs(%) = {:.5f}, BRAM(%) = {:.5f}, Mem BW = {}, Pipeline Depth = {}, Modules Parameters = {}".format(final_name, int(best_latency), interval, max_throughput, 1/max_throughput, best_dsp, best_bram, best_bw_stat, best_depth, best_params))
+            csv_writer.writerow([final_name, int(best_latency), interval, max_throughput, 1/max_throughput, best_dsp, best_bram, best_bw_stat, int(best_depth), best_params])
+            logging.warning("Best config for layer {}. Latency(cycles new) = {}, Latency(cycles/output) = {}, Throughput(outputs/sec) = {:.5f}, Latency(secs/output) = {:.5f}, DSPs(%) = {:.5f}, BRAM(%) = {:.5f}, Mem BW = {}, Pipeline Depth = {}, Modules Parameters = {}".format(final_name, int(best_latency), interval, max_throughput, 1/max_throughput, best_dsp, best_bram, best_bw_stat, int(best_depth), best_params))
 
-        sns.scatterplot(x=throughput_config, y=dsp_config, hue=bram_config, style=mem_bw_status, alpha=.5, size=bram_total_util)
-        plt.axhline(y=100, color='r', linestyle='-')
-        plt.axhline(y=90, color='r', linestyle='--')
+        if plot_design_points:
+            sns.scatterplot(x=throughput_config, y=dsp_config, hue=bram_config, style=mem_bw_status, alpha=.5, size=bram_total_util)
+            plt.axhline(y=100, color='r', linestyle='-')
+            plt.axhline(y=90, color='r', linestyle='--')
 
-        plt.title(str(final_name))
-        plt.xlabel('Throughtput(outputs/sec)')
-        plt.xscale("log")
-        plt.ylabel('DSPS %')
-        plt.legend(frameon=False, prop={"size":8}, loc='upper right', bbox_to_anchor=(1.11, 1.12), borderaxespad=0.)
-        if not os.path.exists(os.path.join(os.getcwd(), 'fpga_modeling_reports', 'graphs', model_name, 'partition_layers')):
-            os.makedirs(os.path.join(os.getcwd(), 'fpga_modeling_reports', 'graphs', model_name, 'partition_layers'))
-        partitions_path = os.path.join(os.getcwd(), 'fpga_modeling_reports', 'graphs', model_name, 'partition_layers')
-        plt.savefig(os.path.join(partitions_path, str(final_name) + ".png"))
-        plt.clf()
+            plt.title(str(final_name))
+            plt.xlabel('Throughtput(outputs/sec)')
+            plt.xscale("log")
+            plt.ylabel('DSPS %')
+            plt.legend(frameon=False, prop={"size":8}, loc='upper right', bbox_to_anchor=(1.11, 1.12), borderaxespad=0.)
+            if not os.path.exists(os.path.join(os.getcwd(), 'fpga_modeling_reports', 'graphs', model_name, 'partition_layers')):
+                os.makedirs(os.path.join(os.getcwd(), 'fpga_modeling_reports', 'graphs', model_name, 'partition_layers'))
+            partitions_path = os.path.join(os.getcwd(), 'fpga_modeling_reports', 'graphs', model_name, 'partition_layers')
+            plt.savefig(os.path.join(partitions_path, str(final_name) + ".png"))
+            plt.clf()
         
 
 def find_pareto(scores):
@@ -1956,16 +2011,9 @@ def plot_graph(x, y, bram_util, bram, mem_compute_bounded, leg, name, type, mode
                 legd = []
                 for l in pareto:
                     legd.append(leg[l])
-        #         plt.legend(legd, frameon=False, prop={"size":8}, loc='upper right', bbox_to_anchor=(1.11, 1.12), borderaxespad=0.)
-        #     else:
-        #         plt.legend([],[], frameon=False)
-        # else:
+
         plt.legend(frameon=False, prop={"size":8}, loc='upper right', bbox_to_anchor=(1.11, 1.12), borderaxespad=0.)
 
-        if se_layer and calculate_pareto:
-            logging.info(name)
-            for l_i, l in enumerate(legd):
-                logging.info("Config: {} -> Throughput: {}. DSPs: {}".format(l, pareto_front[l_i, 0], pareto_front[l_i, 1]))
         file_name = name.replace('.', '_') + '.jpg'
         plt.savefig(os.path.join(dsps_dir, file_name))
         plt.clf()
@@ -1998,6 +2046,7 @@ def plot_graph(x, y, bram_util, bram, mem_compute_bounded, leg, name, type, mode
         plt.savefig(os.path.join(mem_bw_dir, file_name))
         plt.clf()
 
+@timebudget
 def performance_graphs(file_name="x3d_m", layers_to_plot=None, calculate_pareto=False):
     
     csv_file = os.path.join(os.getcwd(), 'fpga_modeling_reports', file_name + '.csv')
@@ -2108,12 +2157,15 @@ def drop_duplicates(file_name="x3d_m", pareto=False):
         csv_file_read = os.path.join(os.getcwd(), 'fpga_modeling_reports', file_name + '.csv')
 
     data = pd.read_csv(csv_file_read)
+    original_size = len(data.index)
     columns = data.columns.tolist()
     del(columns[1])
     del(columns[-1])
     del(columns[-1])
 
     data_droped = data.drop_duplicates(subset=columns)
+    final_size = len(data_droped.index)
+    logging.warning("Dropped {} rows due to duplicate".format(original_size - final_size))
     os.remove(csv_file_read)
     data_droped.to_csv(csv_file_read, index=False)
 
@@ -2157,6 +2209,7 @@ def plot_best_config_params(file_name="x3d_m"):
         plt.yscale('log')
         plt.savefig('fpga_modeling_reports/param_analysis/' + file_name + '/best_configuration_param_comparison.png')
 
+@timebudget
 def get_paretto(file_name="x3d_m"):
     
     csv_file_par = os.path.join(os.getcwd(), 'fpga_modeling_reports', file_name + '_pareto.csv')
@@ -2284,30 +2337,39 @@ def main():
         The ZCU104 has 4Gb DDR4 memory clocked at 1200MHz with 16-bit bus width. This leads to a total of 18.75 Gb/s or 2.35 GB/s.
         The ZCU104 has a total of 1728 DSP slices
     '''
-
     # Target FPGA Zynq UltraScale+ MPSoC ZCU102. Assuming clock frequency of 100 MHz. The mem bandwidth used is 80% of its nominal value.
-    onnx_modeling = ModelFeatureMapsOnnx(model=args.model_name, word_length=16, clock_freq=100, bram=1825, dsp=2520, mem_bw=15.0)
+    onnx_modeling = ModelFeatureMapsOnnx(model=args.model_name, word_length=16, clock_freq=100, bram=1825, dsp=2520, mem_bw=18.0)
+
 
     onnx_modeling.from_onnx()
-
     # onnx_modeling.get_info()
-
     onnx_modeling.create_modules()
 
+    ray.init(num_cpus=10)
     onnx_modeling.create_design_points(file_name=fname, s_in=onnx_modeling.max_words_per_cycle*0.5, s_out=onnx_modeling.max_words_per_cycle*0.5)
     drop_duplicates(file_name=fname, pareto=False)
     get_paretto(file_name=fname)
     drop_duplicates(file_name=fname, pareto=True)
-
     # performance_graphs(file_name=fname, layers_to_plot=['Conv', 'Se', 'GlobalAveragePool', 'MatMul', 'Gemm'], calculate_pareto=args.calculate_pareto)
+    ray.shutdown()
 
 
-    # partition_layers = get_partition_layers(onnx_modeling.modules, args.model_name)
-    # for n, l in enumerate(partition_layers):
-    #     print("Evaluating Layer {}/{}".format(n+1, len(partition_layers)))
-    #     onnx_modeling.compose_layers(fname_pareto, l, n+1, fname, args.calculate_pareto, onnx_modeling.max_words_per_cycle, branch_on_bram=False)
+    partition_layers = get_partition_layers(onnx_modeling.modules, args.model_name)
 
-    # plot_best_config_params(file_name=args.model_name)
+
+    ray.init(num_cpus=10)
+    # processes_pool = Pool(10)
+    # input_vars = []
+    result_ids = []
+    for n, l in enumerate(partition_layers):
+        print("Evaluating Layer {}/{}".format(n+1, len(partition_layers)))
+        # input_vars.append([fname_pareto, l, n+1, fname, args.calculate_pareto, onnx_modeling.max_words_per_cycle, False, False])
+        result_ids.append(onnx_modeling.compose_layers.remote(onnx_modeling, file_name=fname_pareto, layers_names=l, final_name=n+1, model_name=fname, calculate_pareto=args.calculate_pareto, membw=onnx_modeling.max_words_per_cycle, branch_on_bram=False, plot_design_points=False))
+        # onnx_modeling.compose_layers(fname_pareto, l, n+1, fname, args.calculate_pareto, onnx_modeling.max_words_per_cycle, branch_on_bram=False, plot_design_points=False)
+    # multithreaded_modeling(onnx_modeling.compose_layers, input_vars, processes_pool)
+    results = ray.get(result_ids)
+    plot_best_config_params(file_name=args.model_name)
+    ray.shutdown()
 
 if __name__ == '__main__':
     main()

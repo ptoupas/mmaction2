@@ -277,7 +277,7 @@ def find_pareto(scores):
 def plot_graph(x, y, leg, name, type, model_name):
     se_layer = True if "Se" in name.split("_") else False
     sns.set(rc={'figure.figsize':(15,8)})
-    sns.set_style("darkgrid", {"axes.facecolor": ".85"})
+    sns.set_style("whitegrid")
     
     dsps_dir = os.path.join(os.getcwd(), 'fpga_modeling_reports', 'graphs', model_name, 'throughput_dsps')
     if not os.path.exists(dsps_dir):

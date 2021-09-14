@@ -4,7 +4,7 @@ import seaborn as sns
 import numpy as np
 
 sns.set(rc={'figure.figsize':(15,8)})
-sns.set_style("darkgrid", {"axes.facecolor": ".85"})
+sns.set_style("whitegrid")
 
 sizes = {}
 for file in os.listdir('fpga_modeling_reports/models_sizes'):
