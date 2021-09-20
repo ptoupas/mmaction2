@@ -140,6 +140,4 @@ mmaction/tools/*
 mmaction/.mim
 
 fpga_modeling_reports/
-i3d.onnx
-x3d_m.onnx
-c3d.onnx
+*.onnx
