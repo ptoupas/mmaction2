@@ -27,8 +27,8 @@ def parse_args():
 def main():
     args = parse_args()
 
-    path = args.src_dir + "certhbot_har/" + args.format
-    out_path = args.out_dir + "certhbot_har/"
+    path = args.src_dir + args.format
+    out_path = args.out_dir
     
     train_path = out_path + 'certhbot_har_train_split1_' + args.format + '.txt'
     val_path = out_path + 'certhbot_har_val_split1_' + args.format + '.txt'

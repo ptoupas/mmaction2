@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 DATA_DIR="../../../data/ucf101/annotations"
+# DATA_DIR="/second_ext4/ptoupas/data/ucf101/annotations"
 
 if [[ ! -d "${DATA_DIR}" ]]; then
   echo "${DATA_DIR} does not exist. Creating";
