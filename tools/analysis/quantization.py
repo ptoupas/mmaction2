@@ -5,13 +5,14 @@ import argparse
 import coloredlogs
 import logging
 import onnx.numpy_helper as onh
+from onnx import helper
 
 coloredlogs.install(level='INFO')
 logging.basicConfig(level=logging.INFO)
 
 class Quantizer():
     def __init__(self, model):
-      self.fractional_part = 9
+      self.fractional_part = 8
       self.model_name = model
       self.model_path = model + ".onnx"
       self.model_path_extended = self.model_name + "_extended.onnx"
@@ -20,6 +21,30 @@ class Quantizer():
       self.onnx_model = onnx.load(self.model_path)
       self.onnx_model = onnx.shape_inference.infer_shapes(self.onnx_model)
       onnx.checker.check_model(self.onnx_model)
+
+    def add_fmaps_to_outputs(self):
+        model_nodes = self.onnx_model.graph.node
+        model_outputs = [n.name for n in self.onnx_model.graph.output]
+        for node in model_nodes:
+            if node.output[0] in model_outputs:
+                continue
+            logging.info("{} -> {} ({})".format(node.name, node.output, len(node.output)))
+            intermediate_layer_value_info = helper.ValueInfoProto()
+            intermediate_layer_value_info.name = node.output[0]
+            self.onnx_model.graph.output.append(intermediate_layer_value_info)
+        onnx.save(self.onnx_model, self.model_path_extended)
+
+    def get_fmaps(self):
+        self.add_fmaps_to_outputs()
+
+        session = onnxruntime.InferenceSession(self.model_path_extended, None)
+
+        input_name = session.get_inputs()[0].name  
+
+        #TODO: Should load some inputs from the kinetics 400 dataset and get the final results using this input.
+        dummy_input = np.random.randn(1, 1, 3, 16, 224, 224).astype(np.float32)
+        
+        outputs = session.run([], {input_name: dummy_input})
 
     def get_params(self, input):
       node_params = []
