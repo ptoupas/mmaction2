@@ -324,9 +324,25 @@ class ModelFeatureMapsOnnx():
     def get_info(self):
         file = open("fpga_modeling_reports/models_sizes/" + self.model_name + "_conv_sizes.txt", "w")
         for k in self.layers.keys():
-            logging.info("Node ({}):\n{}".format(k, self.layers[k]))
-            
-            if "Conv" in k.split("_"):
+            # logging.info("Node ({}):\n{}".format(k, self.layers[k]))
+            ofmap = np.prod(np.array(self.layers[k]['output']))
+            param = np.prod(np.array(self.layers[k]['kernel'])) if not len(self.layers[k]['kernel']) == 0 else 0 
+            param += np.prod(np.array(self.layers[k]['bias'])) if not len(self.layers[k]['bias']) == 0 else 0
+            macs = 0
+            if self.layers[k]['operation'] == "Conv":
+                kernel = self.layers[k]['kernel'][1:]
+                macs = ofmap*np.prod(np.array(kernel))
+            elif self.layers[k]['operation'] == "BatchNormalization":
+                param += np.prod(np.array(self.layers[k]['running_mean'])) if not len(self.layers[k]['running_mean']) == 0 else 0
+                param += np.prod(np.array(self.layers[k]['running_var'])) if not len(self.layers[k]['running_var']) == 0 else 0
+                macs = np.prod(np.array(self.layers[k]['input'][0]))*3
+            elif self.layers[k]['operation'] == "MatMul" or self.layers[k]['operation'] == "Gemm":
+                macs = np.prod(np.array(self.layers[k]['kernel']))
+            elif self.layers[k]['operation'] == "GlobalAveragePool":
+                macs = ofmap*2
+            logging.info("Node {}: out fmaps {}-{}(MBs) params {}-{}(MBs) macs {}".format(k, ofmap, (ofmap*self.wb)/(1e6), param, (param*self.wb)/(1e6), macs/1e9))
+
+            if self.layers[k]['operation'] == "Conv": #or self.layers[k]['operation'] == "Gemm":
                 ifmap_size = self.layers[k]['input'][0]
                 kernel_size = self.layers[k]['kernel']
                 bias_size = self.layers[k]['bias']
@@ -349,8 +365,8 @@ class ModelFeatureMapsOnnx():
         rate_in = 1 * s_in
         rate_out = 1 * s_in
         mem = cin * 4
-        muls = 1 * s_in
-        adds = 3 * s_in
+        muls = max(3, math.ceil(3 * s_in))
+        adds = max(3, math.ceil(3 * s_in))
 
         return rate_in, rate_out, muls, adds, mem
     
@@ -367,11 +383,12 @@ class ModelFeatureMapsOnnx():
         rate_in = 1 * s_in
         rate_out = 1 * s_in
         muls = max(3, math.ceil(3 * s_in))
-        adds = 0
+        adds = max(1, math.ceil(1 * s_in))
         mem = 0
 
         return rate_in, rate_out, muls, adds, mem
 
+    #TODO: Revise this layer
     def gap_layer_config(self, in_shape, coarse=None, s_in=1, s_out=1):
         cin = in_shape[1]
         din = in_shape[2]
@@ -384,11 +401,11 @@ class ModelFeatureMapsOnnx():
             gap_folding = s_in
 
         rate_in = 1 * gap_folding
-        rate_out = 1/(din * hin * win) * gap_folding
+        rate_out = (1 * gap_folding)/(din * hin * win)
         mem = cin
-        muls = 2 * gap_folding
-        adds = 1 * gap_folding
-        depth = cin * din * hin * win
+        muls = max(2, math.ceil(2 * gap_folding))
+        adds = max(1, math.ceil(1 * gap_folding))
+        depth = din * hin * win
 
         mem_bounded_in = False
         if s_in < rate_in:
@@ -413,8 +430,8 @@ class ModelFeatureMapsOnnx():
         rate_in = 1 * s_in
         rate_out = 1 * s_in
         mem = 0
-        muls = 4 * s_in
-        adds = 1 * s_in
+        muls = max(4, math.ceil(4 * s_in))
+        adds = 0
 
         return rate_in, rate_out, muls, adds, mem
 
@@ -493,10 +510,13 @@ class ModelFeatureMapsOnnx():
         adds_unrl_2 = 1
 
         depthwise = False
-        if cout == groups:
+        if cin == groups:
             depthwise = True
 
-        rates_graph = np.zeros( shape=(4,5) , dtype=float )
+        if not depthwise:
+            rates_graph = np.zeros( shape=(4,5) , dtype=float )
+        else:
+            rates_graph = np.zeros( shape=(3,4) , dtype=float )
 
         # The convolution operation is a Layer and is composed of the following modules: Sliding window, Conv, Accumulator 
         # Rates for the SW module
@@ -514,11 +534,12 @@ class ModelFeatureMapsOnnx():
         rates_graph[2,2] = rin_conv
         rates_graph[2,3] = rout_conv / (kd * kh * kw)
         
-        # Rates for the Accumulator module
-        rin_accum = 1 * rates_graph[2,3]
-        rout_accum = (1 * groups * rates_graph[2,3])/cin
-        rates_graph[3,3] = rin_accum
-        rates_graph[3,4] = rout_accum
+        if not depthwise:
+            # Rates for the Accumulator module
+            rin_accum = 1 * rates_graph[2,3]
+            rout_accum = (1 * groups * rates_graph[2,3])/cin
+            rates_graph[3,3] = rin_accum
+            rates_graph[3,4] = rout_accum
 
         # print("CONV RATE GRAPH")
         # print(rates_graph)
@@ -537,7 +558,10 @@ class ModelFeatureMapsOnnx():
             mem_bounded_in = True
 
         rate_in = abs(rates_graph[0,0])
-        rate_out = abs(rates_graph[3,4])
+        if not depthwise:
+            rate_out = abs(rates_graph[3,4])
+        else:
+            rate_out = abs(rates_graph[2,3])
 
         mem_bounded_out = False
         if mem_bw_out < rate_out:
@@ -1022,7 +1046,9 @@ class ModelFeatureMapsOnnx():
 
             pr_name = name
 
-            # if cout == groups:
+            depthwise = False
+            if cout == groups:
+                depthwise = True
             #     pr_name = pr_name + "_DepthWise"
             # if kd == 1 and kh == 1 and kw == 1:
             #     pr_name = pr_name + "_PointWise"
@@ -1033,13 +1059,16 @@ class ModelFeatureMapsOnnx():
             coarse_out_config = [1, cout//4, cout//2, cout]
             coarse_out_config = np.unique(coarse_out_config)
             coarse_out_config = coarse_out_config[np.nonzero(coarse_out_config)].tolist()
+            if depthwise:
+                coarse_out_config = [1]
             max_fine = kd * kh * kw
             fine_config = np.array([kd/max_fine, kh/max_fine, kw/max_fine, (kd * kh)/max_fine, (kh * kw)/max_fine, (kd * kw)/max_fine, 1])
             fine_config = np.unique(fine_config).tolist()
             if kd == 1 and kh == 1 and kw == 1:
                 fine_config = [0.5, 1]
             
-            mem_bw_config = [((s_in+s_out)*0.25, (s_in+s_out)*0.75), ((s_in+s_out)*0.50, (s_in+s_out)*0.50), ((s_in+s_out)*0.75, (s_in+s_out)*0.25)]
+            mem_bw = s_in + s_out
+            mem_bw_config = [(mem_bw*0.2, mem_bw*0.8), (mem_bw*0.4, mem_bw*0.6), (mem_bw*0.5, mem_bw*0.5), (mem_bw*0.6, mem_bw*0.4), (mem_bw*0.8, mem_bw*0.2), (mem_bw*0.9, mem_bw*0.1)]
             for coarse_in in coarse_in_config:
                 for coarse_out in coarse_out_config:
                     for fine in fine_config:
@@ -1306,7 +1335,8 @@ class ModelFeatureMapsOnnx():
 
             fine_config = [0.5, 1]
 
-            mem_bw_config = [((s_in+s_out)*0.25, (s_in+s_out)*0.75), ((s_in+s_out)*0.50, (s_in+s_out)*0.50), ((s_in+s_out)*0.75, (s_in+s_out)*0.25)]
+            mem_bw = s_in + s_out
+            mem_bw_config = [(mem_bw*0.2, mem_bw*0.8), (mem_bw*0.4, mem_bw*0.6), (mem_bw*0.5, mem_bw*0.5), (mem_bw*0.6, mem_bw*0.4), (mem_bw*0.8, mem_bw*0.2), (mem_bw*0.9, mem_bw*0.1)]
             for coarse_in in coarse_in_config:
                 for coarse_out in coarse_out_config:
                     for fine in fine_config:
@@ -1348,7 +1378,8 @@ class ModelFeatureMapsOnnx():
 
             fine_config = [0.25, 0.5, 0.75, 1]
 
-            mem_bw_config = [((s_in+s_out)*0.25, (s_in+s_out)*0.75), ((s_in+s_out)*0.50, (s_in+s_out)*0.50), ((s_in+s_out)*0.75, (s_in+s_out)*0.25)]
+            mem_bw = s_in + s_out
+            mem_bw_config = [(mem_bw*0.2, mem_bw*0.8), (mem_bw*0.4, mem_bw*0.6), (mem_bw*0.5, mem_bw*0.5), (mem_bw*0.6, mem_bw*0.4), (mem_bw*0.8, mem_bw*0.2), (mem_bw*0.9, mem_bw*0.1)]
             for coarse_in in coarse_in_config:
                 for coarse_out in coarse_out_config:
                     for fine in fine_config:
@@ -1610,7 +1641,7 @@ class ModelFeatureMapsOnnx():
             params_config.append(json.dumps(params_per_module))
 
     @ray.remote
-    @timebudget     
+    @timebudget
     def compose_layers(self, file_name, layers_names, final_name, model_name, calculate_pareto, membw, branch_on_bram, plot_design_points=False):
         sns.set(rc={'figure.figsize':(15,8)})
         sns.set_style("whitegrid")
@@ -2338,7 +2369,7 @@ def main():
         The ZCU104 has a total of 1728 DSP slices
     '''
     # Target FPGA Zynq UltraScale+ MPSoC ZCU102. Assuming clock frequency of 100 MHz. The mem bandwidth used is 80% of its nominal value.
-    onnx_modeling = ModelFeatureMapsOnnx(model=args.model_name, word_length=16, clock_freq=100, bram=1825, dsp=2520, mem_bw=18.0)
+    onnx_modeling = ModelFeatureMapsOnnx(model=args.model_name, word_length=16, clock_freq=100, bram=1825, dsp=2520, mem_bw=18.8)
 
 
     onnx_modeling.from_onnx()
