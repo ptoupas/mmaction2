@@ -16,6 +16,8 @@ logging.basicConfig(level=logging.INFO)
 sns.set(rc={'figure.figsize':(15,8)})
 sns.set_style("whitegrid")
 
+supported_ops_onnx = ['Conv', 'Add', 'AveragePool', 'BatchNormalization', 'Div', 'Einsum', 'Elu', 'Exp', 'GRU', 'Gemm', 'GlobalAveragePool', 'GlobalLpPool', 'GlobalMaxPool', 'HardSigmoid', 'LSTM', 'LeakyRelu', 'MatMul', 'MaxPool', 'PRelu', 'Pow', 'RNN', 'Reciprocal', 'Relu', 'Selu', 'Sigmoid', 'Sqrt', 'Sub', 'Tan', 'Tanh', 'Transpose', 'Celu', 'HardSwish', 'LogSoftmax', 'Softmax']
+
 class ModelAnalyser():
     def __init__(self, model):
         self.model_name = model
@@ -61,24 +63,58 @@ class ModelAnalyser():
         session = onnxruntime.InferenceSession(self.model_path_extended, None)
 
         input_name = session.get_inputs()[0].name  
+        ucf_data = np.load('/home/ptoupas/Development/ACTIVE/mmaction2/ucf101_examples.npy')
+        final_outputs = []
 
-        #TODO: Should load some inputs from the kinetics 400 dataset and get the final results using this input.
-        dummy_input = np.random.randn(1, 1, 3, 16, 224, 224).astype(np.float32)
-        
-        outputs = session.run([], {input_name: dummy_input})
-        self.plot_inter_fmaps(outputs)
+        for i in range(1): #ucf_data.shape[0]
+            input = ucf_data[i]
+            outputs = session.run([], {input_name: input})
+            if len(final_outputs) == 0:
+                final_outputs = outputs
+                continue
+            for j in range(len(outputs)):
+                final_outputs[j] = (final_outputs[j] + outputs[j])/2
+
+        self.plot_inter_fmaps(final_outputs)
+
+    def is_supported(self, out_id):
+        for node in self.onnx_model.graph.node:
+            if node.output[0] == out_id.name:
+                if node.op_type in supported_ops_onnx:
+                    return True
+        return False
 
     def plot_inter_fmaps(self, outputs):
         if not os.path.exists(os.path.join(os.getcwd(), 'fpga_modeling_reports', 'param_analysis', self.model_name, 'fmaps')):
             os.makedirs(os.path.join(os.getcwd(), 'fpga_modeling_reports', 'param_analysis', self.model_name, 'fmaps'))
 
-        model_outputs = [n.name for n in self.onnx_model.graph.output]
+        model_outputs = [n.name for n in self.onnx_model.graph.output if self.is_supported(n)]
+        
+        tota_max = -1000000
+        total_min = 1000000
         for out, out_name in tqdm(zip(outputs, model_outputs), leave=False):
-            sns.histplot(x=out.flatten(), bins=250, kde=True)
+            if out_name == '961' or out_name == '962' or out_name == '963' or out_name == '964' or out_name == '965' or out_name == '966' or out_name == '967' or out_name == '968':
+                continue
+            q0 = np.percentile(out.flatten(),50)
+            q1 = np.percentile(out.flatten(),25)
+            q3 = np.percentile(out.flatten(),75)
+            iqr = q3-q1
+            whis = 3.5
+            upper_wisk = q0 + whis*iqr
+            lower_wisk = q0 - whis*iqr
+            tota_max = max(tota_max,upper_wisk)
+            total_min = min(total_min,lower_wisk)
+
+            # sns.histplot(x=out.flatten(), bins=250, kde=True)
+            # sns.boxplot(x=out.flatten(), whis=[1, 99])
+            sns.boxplot(x=out.flatten(), whis=3.5)
+            plt.axvline(x=min(out.flatten()), color='r')
+            plt.axvline(x=max(out.flatten()), color='r')
             plt.title(out_name + " ({})".format(out.flatten().shape[0]))
             img_name = out_name + ".png"
             plt.savefig(os.path.join('fpga_modeling_reports', 'param_analysis', self.model_name, 'fmaps', img_name))
             plt.clf()
+        logging.info("FMAPS: total max = {:.4f}, total min = {:.4f}".format(tota_max, total_min))
 
     def get_filters(self):
         if not os.path.exists(os.path.join(os.getcwd(), 'fpga_modeling_reports', 'param_analysis', self.model_name, 'filters')):
@@ -86,7 +122,9 @@ class ModelAnalyser():
 
         model_nodes = self.onnx_model.graph.node
 
-        for node in tqdm(model_nodes, leave=False):
+        tota_max = -1000000
+        total_min = 1000000
+        for node in model_nodes:
             logging.info("{}".format(node.name))
             params = self.get_params(node.input)
             
@@ -97,11 +135,27 @@ class ModelAnalyser():
 
             num_params = len(concatenated_params)
             if num_params > 0:
-                sns.histplot(x=concatenated_params, bins=250, kde=True)
+                concatenated_params = np.array(concatenated_params).flatten()
+                q0 = np.percentile(concatenated_params,50)
+                q1 = np.percentile(concatenated_params,25)
+                q3 = np.percentile(concatenated_params,75)
+                iqr = q3-q1
+                whis = 3.5
+                upper_wisk = q0 + whis*iqr
+                lower_wisk = q0 - whis*iqr
+                tota_max = max(tota_max,upper_wisk)
+                total_min = min(total_min,lower_wisk)
+
+                # sns.histplot(x=concatenated_params, bins=250, kde=True)
+                # sns.boxplot(x=concatenated_params, whis=[1, 99])
+                sns.boxplot(x=concatenated_params, whis=3.5)
+                plt.axvline(x=min(concatenated_params), color='r')
+                plt.axvline(x=max(concatenated_params), color='r')
                 plt.title(node_name + " ({})".format(num_params))
                 img_name = node_name + ".png"
                 plt.savefig(os.path.join('fpga_modeling_reports', 'param_analysis', self.model_name, 'filters', img_name))
                 plt.clf()
+        logging.info("FILTERS: total max = {:.4f}, total min = {:.4f}".format(tota_max, total_min))
 
 def parse_args():
     parser = argparse.ArgumentParser(description='MMAction2 parse model')
@@ -114,5 +168,5 @@ if __name__ == '__main__':
     args = parse_args()
 
     analyser = ModelAnalyser(args.model_name)
-    analyser.get_filters()
+    # analyser.get_filters()
     analyser.get_fmaps()

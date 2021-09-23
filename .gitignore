@@ -141,3 +141,4 @@ mmaction/.mim
 
 fpga_modeling_reports/
 *.onnx
+*.npy
