@@ -179,7 +179,6 @@ class ModelFeatureMapsOnnx():
                 for dim in fmap.type.tensor_type.shape.dim:
                     out_shape.append(dim.dim_value)
                 return out_shape
-                break
         return []
 
     @timebudget
@@ -320,43 +319,62 @@ class ModelFeatureMapsOnnx():
                                 "bias": bias,
                                 "running_mean": running_mean,
                                 "running_var": running_var,}
+
+    def get_layer_num_from_output(self, out_node):
+        layer_num = -1
+        for node in self.onnx_model.graph.node:
+            if node.output[0] == out_node:
+                if node.op_type == "Conv" or node.op_type == "BatchNormalization" or node.op_type == "Gemm":
+                    layer_num = node.input[1].split(".")[1] + '.' + node.input[1].split(".")[2]
+                    layer_num = layer_num.split("layer")[1] if len(layer_num.split("layer")) > 1 else layer_num 
+        return layer_num
+
     @timebudget
     def get_info(self):
         file = open("fpga_modeling_reports/models_sizes/" + self.model_name + "_conv_sizes.txt", "w")
-        for k in self.layers.keys():
-            # logging.info("Node ({}):\n{}".format(k, self.layers[k]))
-            ofmap = np.prod(np.array(self.layers[k]['output']))
-            param = np.prod(np.array(self.layers[k]['kernel'])) if not len(self.layers[k]['kernel']) == 0 else 0 
-            param += np.prod(np.array(self.layers[k]['bias'])) if not len(self.layers[k]['bias']) == 0 else 0
-            macs = 0
-            if self.layers[k]['operation'] == "Conv":
-                kernel = self.layers[k]['kernel'][1:]
-                macs = ofmap*np.prod(np.array(kernel))
-            elif self.layers[k]['operation'] == "BatchNormalization":
-                param += np.prod(np.array(self.layers[k]['running_mean'])) if not len(self.layers[k]['running_mean']) == 0 else 0
-                param += np.prod(np.array(self.layers[k]['running_var'])) if not len(self.layers[k]['running_var']) == 0 else 0
-                macs = np.prod(np.array(self.layers[k]['input'][0]))*3
-            elif self.layers[k]['operation'] == "MatMul" or self.layers[k]['operation'] == "Gemm":
-                macs = np.prod(np.array(self.layers[k]['kernel']))
-            elif self.layers[k]['operation'] == "GlobalAveragePool":
-                macs = ofmap*2
-            logging.info("Node {}: out fmaps {}-{}(MBs) params {}-{}(MBs) macs {}".format(k, ofmap, (ofmap*self.wb)/(1e6), param, (param*self.wb)/(1e6), macs/1e9))
+        if not os.path.exists(os.path.join(os.getcwd(), 'fpga_modeling_reports', 'roofline_modeling')):
+                os.makedirs(os.path.join(os.getcwd(), 'fpga_modeling_reports', 'roofline_modeling'))
+        csv_file = os.path.join(os.getcwd(), 'fpga_modeling_reports', 'roofline_modeling', self.model_name + '.csv')
+        with open(csv_file, mode='w') as model_results:
+            csv_writer = csv.writer(model_results, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
 
-            if self.layers[k]['operation'] == "Conv": #or self.layers[k]['operation'] == "Gemm":
-                ifmap_size = self.layers[k]['input'][0]
-                kernel_size = self.layers[k]['kernel']
-                bias_size = self.layers[k]['bias']
+            csv_writer.writerow(["Layer", "Node", "Ifmaps", "Ofmaps", "params", "macs (G)"])
+            for k in self.layers.keys():
+                layer_num = self.get_layer_num_from_output(self.layers[k]['output_id'])
+                ifmap = np.prod(np.array(self.layers[k]['input'][0]))
+                ofmap = np.prod(np.array(self.layers[k]['output']))
+                param = np.prod(np.array(self.layers[k]['kernel'])) if not len(self.layers[k]['kernel']) == 0 else 0 
+                param += np.prod(np.array(self.layers[k]['bias'])) if not len(self.layers[k]['bias']) == 0 else 0
+                macs = 0
+                if self.layers[k]['operation'] == "Conv":
+                    kernel = self.layers[k]['kernel'][1:]
+                    macs = ofmap*np.prod(np.array(kernel))
+                elif self.layers[k]['operation'] == "BatchNormalization":
+                    param += np.prod(np.array(self.layers[k]['running_mean'])) if not len(self.layers[k]['running_mean']) == 0 else 0
+                    param += np.prod(np.array(self.layers[k]['running_var'])) if not len(self.layers[k]['running_var']) == 0 else 0
+                    macs = ifmap*3
+                elif self.layers[k]['operation'] == "MatMul" or self.layers[k]['operation'] == "Gemm":
+                    macs = np.prod(np.array(self.layers[k]['kernel']))
+                elif self.layers[k]['operation'] == "GlobalAveragePool":
+                    macs = ofmap*2
+                logging.info("Layer Num: {}, Node {}: out fmaps {}-{}(MBs) params {}-{}(MBs) macs {}".format(layer_num, k, ofmap, (ofmap*self.wb)/(1e6), param, (param*self.wb)/(1e6), macs/1e9))
+                csv_writer.writerow([layer_num, k, ifmap, ofmap, param, macs])
 
-                ifmap_size = np.prod(np.array(ifmap_size))
-                kernel_size = np.prod(np.array(kernel_size)) if not len(kernel_size) == 0 else 0
-                bias_size = np.prod(np.array(bias_size)) if not len(bias_size) == 0 else 0
+                if self.layers[k]['operation'] == "Conv": #or self.layers[k]['operation'] == "Gemm":
+                    ifmap_size = self.layers[k]['input'][0]
+                    kernel_size = self.layers[k]['kernel']
+                    bias_size = self.layers[k]['bias']
 
-                ifmap_mem_footprint = ((ifmap_size * self.wl) / 8) / 1e6
-                kernel_mem_footprint = ((kernel_size * self.wl) / 8) / 1e6 if not kernel_size == 0 else 0
-                bias_mem_footprint = ((bias_size * self.wl) / 8) / 1e6 if not bias_size == 0 else 0
+                    ifmap_size = np.prod(np.array(ifmap_size))
+                    kernel_size = np.prod(np.array(kernel_size)) if not len(kernel_size) == 0 else 0
+                    bias_size = np.prod(np.array(bias_size)) if not len(bias_size) == 0 else 0
 
-                txt_line = "{:.5f},{:.5f}\n".format(ifmap_mem_footprint,kernel_mem_footprint+bias_mem_footprint)
-                file.write(txt_line)
+                    ifmap_mem_footprint = ((ifmap_size * self.wl) / 8) / 1e6
+                    kernel_mem_footprint = ((kernel_size * self.wl) / 8) / 1e6 if not kernel_size == 0 else 0
+                    bias_mem_footprint = ((bias_size * self.wl) / 8) / 1e6 if not bias_size == 0 else 0
+
+                    txt_line = "{:.5f},{:.5f}\n".format(ifmap_mem_footprint,kernel_mem_footprint+bias_mem_footprint)
+                    file.write(txt_line)
         file.close()
 
     def batchnorm_layer_config(self, in_shape, s_in=1, s_out=1):
@@ -2373,7 +2391,8 @@ def main():
 
 
     onnx_modeling.from_onnx()
-    # onnx_modeling.get_info()
+    onnx_modeling.get_info()
+    exit()
     onnx_modeling.create_modules()
 
     ray.init(num_cpus=10)
