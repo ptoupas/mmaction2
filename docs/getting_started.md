@@ -5,21 +5,22 @@ For installation instructions, please see [install.md](install.md).
 
 <!-- TOC -->
 
-- [Datasets](#datasets)
-- [Inference with Pre-Trained Models](#inference-with-pre-trained-models)
-  - [Test a dataset](#test-a-dataset)
-  - [High-level APIs for testing a video and rawframes](#high-level-apis-for-testing-a-video-and-rawframes)
-- [Build a Model](#build-a-model)
-  - [Build a model with basic components](#build-a-model-with-basic-components)
-  - [Write a new model](#write-a-new-model)
-- [Train a Model](#train-a-model)
-  - [Iteration pipeline](#iteration-pipeline)
-  - [Training setting](#training-setting)
-  - [Train with a single GPU](#train-with-a-single-gpu)
-  - [Train with multiple GPUs](#train-with-multiple-gpus)
-  - [Train with multiple machines](#train-with-multiple-machines)
-  - [Launch multiple jobs on a single machine](#launch-multiple-jobs-on-a-single-machine)
-- [Tutorials](#tutorials)
+- [Getting Started](#getting-started)
+  - [Datasets](#datasets)
+  - [Inference with Pre-Trained Models](#inference-with-pre-trained-models)
+    - [Test a dataset](#test-a-dataset)
+    - [High-level APIs for testing a video and rawframes](#high-level-apis-for-testing-a-video-and-rawframes)
+  - [Build a Model](#build-a-model)
+    - [Build a model with basic components](#build-a-model-with-basic-components)
+    - [Write a new model](#write-a-new-model)
+  - [Train a Model](#train-a-model)
+    - [Iteration pipeline](#iteration-pipeline)
+    - [Training setting](#training-setting)
+    - [Train with a single GPU](#train-with-a-single-gpu)
+    - [Train with multiple GPUs](#train-with-multiple-gpus)
+    - [Train with multiple machines](#train-with-multiple-machines)
+    - [Launch multiple jobs on a single machine](#launch-multiple-jobs-on-a-single-machine)
+  - [Tutorials](#tutorials)
 
 <!-- TOC -->
 
@@ -147,10 +148,14 @@ model = init_recognizer(config_file, checkpoint_file, device=device)
 
 # test a single video and show the result:
 video = 'demo/demo.mp4'
-labels = 'demo/label_map_k400.txt'
+labels = 'tools/data/kinetics/label_map_k400.txt'
 results = inference_recognizer(model, video, labels)
 
 # show the results
+labels = open('tools/data/kinetics/label_map_k400.txt').readlines()
+labels = [x.strip() for x in labels]
+results = [(labels[k[0]], k[1]) for k in results]
+
 print(f'The top-5 labels with corresponding scores are:')
 for result in results:
     print(f'{result[0]}: ', result[1])
@@ -176,10 +181,14 @@ model = init_recognizer(config_file, checkpoint_file, device=device, use_frames=
 
 # test rawframe directory of a single video and show the result:
 video = 'SOME_DIR_PATH/'
-labels = 'demo/label_map_k400.txt'
+labels = 'tools/data/kinetics/label_map_k400.txt'
 results = inference_recognizer(model, video, labels, use_frames=True)
 
 # show the results
+labels = open('tools/data/kinetics/label_map_k400.txt').readlines()
+labels = [x.strip() for x in labels]
+results = [(labels[k[0]], k[1]) for k in results]
+
 print(f'The top-5 labels with corresponding scores are:')
 for result in results:
     print(f'{result[0]}: ', result[1])
@@ -205,16 +214,21 @@ model = init_recognizer(config_file, checkpoint_file, device=device)
 
 # test url of a single video and show the result:
 video = 'https://www.learningcontainer.com/wp-content/uploads/2020/05/sample-mp4-file.mp4'
-labels = 'demo/label_map_k400.txt'
+labels = 'tools/data/kinetics/label_map_k400.txt'
 results = inference_recognizer(model, video, labels)
 
 # show the results
+labels = open('tools/data/kinetics/label_map_k400.txt').readlines()
+labels = [x.strip() for x in labels]
+results = [(labels[k[0]], k[1]) for k in results]
+
 print(f'The top-5 labels with corresponding scores are:')
 for result in results:
     print(f'{result[0]}: ', result[1])
 ```
 
-**Note**: We define `data_prefix` in config files and set it None as default for our provided inference configs.
+:::{note}
+We define `data_prefix` in config files and set it None as default for our provided inference configs.
 If the `data_prefix` is not None, the path for the video file (or rawframe directory) to get will be `data_prefix/video`.
 Here, the `video` is the param in the demo scripts above.
 This detail can be found in `rawframe_dataset.py` and `video_dataset.py`. For example,
@@ -225,6 +239,8 @@ This detail can be found in `rawframe_dataset.py` and `video_dataset.py`. For ex
   the param `video` should be `VIDEO.mp4` (`VIDEO_NAME`).
 - When rawframes path is `VIDEO_NAME/img_xxxxx.jpg`, and `data_prefix` is None in the config file, the param `video` should be `VIDEO_NAME`.
 - When passing a url instead of a local video file, you need to use OpenCV as the video decoding backend.
+
+:::
 
 A notebook demo can be found in [demo/demo.ipynb](/demo/demo.ipynb)
 

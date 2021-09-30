@@ -19,7 +19,7 @@ Apart from training/testing scripts, We provide lots of useful tools under the `
 
 `tools/analysis/analyze_logs.py` plots loss/top-k acc curves given a training log file. Run `pip install seaborn` first to install the dependency.
 
-![acc_curve_image](/resources/acc_curve.png)
+![acc_curve_image](https://github.com/open-mmlab/mmaction2/raw/master/resources/acc_curve.png)
 
 ```shell
 python tools/analysis/analyze_logs.py plot_curve ${JSON_LOGS} [--keys ${KEYS}] [--title ${TITLE}] [--legend ${LEGEND}] [--backend ${BACKEND}] [--style ${STYLE}] [--out ${OUT_FILE}]
@@ -85,11 +85,13 @@ Params: 28.04 M
 ==============================
 ```
 
-**Note**: This tool is still experimental and we do not guarantee that the number is absolutely correct.
+:::{note}
+This tool is still experimental and we do not guarantee that the number is absolutely correct.
 You may use the result for simple comparisons, but double check it before you adopt it in technical reports or papers.
 
 (1) FLOPs are related to the input shape while parameters are not. The default input shape is (1, 3, 340, 256) for 2D recognizer, (1, 3, 32, 340, 256) for 3D recognizer.
 (2) Some operators are not counted into FLOPs like GN and custom operators. Refer to [`mmcv.cnn.get_model_complexity_info()`](https://github.com/open-mmlab/mmcv/blob/master/mmcv/cnn/utils/flops_counter.py) for details.
+:::
 
 ## Model Conversion
 

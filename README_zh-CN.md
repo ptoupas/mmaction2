@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="/resources/mmaction2_logo.png" width="500"/>
+  <img src="https://github.com/open-mmlab/mmaction2/raw/master/resources/mmaction2_logo.png" width="500"/>
 </div>
 
 ## 简介
@@ -19,11 +19,11 @@ MMAction2 是一款基于 PyTorch 的视频理解开源工具箱，是 [OpenMMLa
 主分支代码目前支持 **PyTorch 1.3 以上**的版本
 
 <div align="center">
-  <img src="/resources/mmaction2_overview.gif" width="450px"/><br>
+  <img src="https://github.com/open-mmlab/mmaction2/raw/master/resources/mmaction2_overview.gif" width="450px"/><br>
     Kinetics-400 上的动作识别
 </div>
 <div align="center">
-  <img src="/resources/spatio-temporal-det.gif" width="800px"/><br>
+  <img src="https://github.com/open-mmlab/mmaction2/raw/master/resources/spatio-temporal-det.gif" width="800px"/><br>
     AVA-2.1 上的时空动作检测
 </div>
 <div align="center">
@@ -53,7 +53,7 @@ MMAction2 是一款基于 PyTorch 的视频理解开源工具箱，是 [OpenMMLa
 
 ## 更新记录
 
-v0.17.0 版本已于 2021 年 8 月 3 日发布，可通过查阅 [更新日志](/docs/changelog.md) 了解更多细节以及发布历史
+v0.18.0 版本已于 2021 年 9 月 2 日发布，可通过查阅 [更新日志](/docs/changelog.md) 了解更多细节以及发布历史
 
 ## 基准测试
 
@@ -118,6 +118,16 @@ v0.17.0 版本已于 2021 年 8 月 3 日发布，可通过查阅 [更新日志]
 - ✅ [SlowOnly+Fast R-CNN](/configs/detection/ava/README_zh-CN.md) (ICCV'2019)
 - ✅ [SlowFast+Fast R-CNN](/configs/detection/ava/README_zh-CN.md) (ICCV'2019)
 - ✅ [Long-Term Feature Bank](/configs/detection/lfb/README_zh-CN.md) (CVPR'2019)
+
+</details>
+
+支持的基于骨骼点的动作识别方法:
+
+<details open>
+<summary>(点击收起)</summary>
+
+- ✅ [PoseC3D](configs/skeleton/posec3d/README.md) (ArXiv'2021)
+- ✅ [STGCN](configs/skeleton/stgcn/README.md) (AAAI'2018)
 
 </details>
 
@@ -244,7 +254,7 @@ MMAction2 是一款由不同学校和公司共同贡献的开源项目。我们�
 扫描下方的二维码可关注 OpenMMLab 团队的 [知乎官方账号](https://www.zhihu.com/people/openmmlab)，加入 OpenMMLab 团队的 [官方交流 QQ 群](https://jq.qq.com/?_wv=1027&k=aCvMxdr3)
 
 <div align="center">
-<img src="/resources/zhihu_qrcode.jpg" height="400" />  <img src="/resources/qq_group_qrcode.jpg" height="400" />
+<img src="https://github.com/open-mmlab/mmaction2/raw/master/resources/zhihu_qrcode.jpg" height="400" />  <img src="https://github.com/open-mmlab/mmaction2/raw/master/resources/qq_group_qrcode.jpg" height="400" />
 </div>
 
 我们会在 OpenMMLab 社区为大家

@@ -146,10 +146,14 @@ model = init_recognizer(config_file, checkpoint_file, device=device)
 
 # 测试单个视频并显示其结果
 video = 'demo/demo.mp4'
-labels = 'demo/label_map_k400.txt'
+labels = 'tools/data/kinetics/label_map_k400.txt'
 results = inference_recognizer(model, video, labels)
 
 # 显示结果
+labels = open('tools/data/kinetics/label_map_k400.txt').readlines()
+labels = [x.strip() for x in labels]
+results = [(labels[k[0]], k[1]) for k in results]
+
 print(f'The top-5 labels with corresponding scores are:')
 for result in results:
     print(f'{result[0]}: ', result[1])
@@ -175,10 +179,14 @@ model = init_recognizer(config_file, checkpoint_file, device=device, use_frames=
 
 # 测试单个视频的帧文件夹并显示其结果
 video = 'SOME_DIR_PATH/'
-labels = 'demo/label_map_k400.txt'
+labels = 'tools/data/kinetics/label_map_k400.txt'
 results = inference_recognizer(model, video, labels, use_frames=True)
 
 # 显示结果
+labels = open('tools/data/kinetics/label_map_k400.txt').readlines()
+labels = [x.strip() for x in labels]
+results = [(labels[k[0]], k[1]) for k in results]
+
 print(f'The top-5 labels with corresponding scores are:')
 for result in results:
     print(f'{result[0]}: ', result[1])
@@ -204,10 +212,14 @@ model = init_recognizer(config_file, checkpoint_file, device=device)
 
 # 测试单个视频的 url 并显示其结果
 video = 'https://www.learningcontainer.com/wp-content/uploads/2020/05/sample-mp4-file.mp4'
-labels = 'demo/label_map_k400.txt'
+labels = 'tools/data/kinetics/label_map_k400.txt'
 results = inference_recognizer(model, video, labels)
 
-#  根据配置文件和检查点来建立模型
+# 显示结果
+labels = open('tools/data/kinetics/label_map_k400.txt').readlines()
+labels = [x.strip() for x in labels]
+results = [(labels[k[0]], k[1]) for k in results]
+
 print(f'The top-5 labels with corresponding scores are:')
 for result in results:
     print(f'{result[0]}: ', result[1])
