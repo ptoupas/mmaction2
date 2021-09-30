@@ -5,8 +5,11 @@ import numpy as np
 
 sns.set(rc={'figure.figsize':(15,8)})
 sns.set_style("whitegrid")
+FONT_SIZE = 22
+FONT_SIZE_TICKS = 17
+FONT_SIZE_LEGEND = 15
 
-mode = 'filters' # one of ['ifmaps', 'filters']
+mode = 'ifmaps' # one of ['ifmaps', 'filters']
 sizes = {}
 for file in os.listdir('fpga_modeling_reports/models_sizes'):
     if file.endswith(".txt"):
@@ -25,14 +28,14 @@ for k in sizes.keys():
     
     if k == 'resnet50-v1-7' or k == 'vgg16-7':
         if mode == 'filters':
-            sns.lineplot(x=x_axis, y=sizes[k]['filters'], label=k, linewidth = 1.5, marker='X')
+            sns.lineplot(x=x_axis, y=sizes[k]['filters'], label=k, linewidth = 1.75, marker='X')
         elif mode == 'ifmaps':
-            sns.lineplot(x=x_axis, y=sizes[k]['ifmaps'], label=k, linewidth = 1.5, marker='X')
+            sns.lineplot(x=x_axis, y=sizes[k]['ifmaps'], label=k, linewidth = 1.75, marker='X')
     else:
         if mode == 'filters':
-            sns.lineplot(x=x_axis, y=sizes[k]['filters'], label=k, linewidth = 1.5, marker='8')
+            sns.lineplot(x=x_axis, y=sizes[k]['filters'], label=k, linewidth = 1.75, marker='8')
         elif mode == 'ifmaps':
-            sns.lineplot(x=x_axis, y=sizes[k]['ifmaps'], label=k, linewidth = 1.5, marker='8')
+            sns.lineplot(x=x_axis, y=sizes[k]['ifmaps'], label=k, linewidth = 1.75, marker='8')
     
     # Old code
     # sns.lineplot(x=x_axis, y=sizes[k]['ifmaps'], label=k+' ifmaps', color='tab:orange')
@@ -46,13 +49,16 @@ plt.hlines(y=4.0125, xmin=x_axis[0], xmax=115, label='ZCU102 BRAM', linestyles='
 # plt.title(k + ' memory footprint')
 
 if mode == 'filters':
-    plt.title('Weights memory footprint per convolutional layer')
+    plt.title('Weights memory footprint per convolutional layer', fontsize=FONT_SIZE)
 elif mode == 'ifmaps':
-    plt.title('Feature maps memory footprint per convolutional layer')
+    plt.title('Feature maps memory footprint per convolutional layer', fontsize=FONT_SIZE)
 
-plt.legend()
-plt.xlabel('Conv Layers')
-plt.ylabel('Memory Footprint (MBs)')
+plt.legend(framealpha=0.5, fontsize=FONT_SIZE_LEGEND)
+plt.xlabel('Conv Layers', fontsize=FONT_SIZE)
+plt.ylabel('Memory Footprint (MBs)', fontsize=FONT_SIZE)
+
+plt.xticks(fontsize=FONT_SIZE_TICKS)
+plt.yticks(fontsize=FONT_SIZE_TICKS)
 
 if mode == 'filters':
     plt.savefig('fpga_modeling_reports/models_sizes/weights_mem_footprint.png')
