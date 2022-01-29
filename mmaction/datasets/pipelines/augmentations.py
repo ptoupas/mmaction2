@@ -1903,3 +1903,63 @@ class MelSpectrogram:
                     f'n_mels={self.n_mels}, '
                     f'fixed_length={self.fixed_length})')
         return repr_str
+
+@PIPELINES.register_module()
+class ApplyBbox:
+    """Applies pre-defined bboxes from specific annotation files. The images
+    produced are black images with background color defined from "bg_color"
+    key and the part of the original image corresponding to the bbox.
+
+    Args:
+        bg_color (str): Determine the backgroud color of the image. Default: black.
+        preview (bool): Whether to show the final results after the bbox augmentation. Default: False.
+    """
+
+    def __init__(self,
+                 bg_color='black',
+                 preview=False):
+        self.bg_color = bg_color
+        self.preview = preview
+
+    def __call__(self, results):
+        """Performs the ApplyBbox augmentation.
+
+        Args:
+            results (dict): The resulting dict to be modified and passed
+                to the next transform in pipeline.
+        """
+        frame_bboxes = {}
+        with open(results['bbox_ann'], 'r') as f:
+            for line in f:
+                frame_idx = int(line.strip().split(' ')[0])
+                bboxes = [float(i) for i in line.strip().split(' ')[1:]]
+                frame_bboxes[frame_idx] = bboxes
+
+        cropped_imgs = []
+        for img, idx in zip(results['imgs'], results['frame_inds']):
+            bbox = frame_bboxes[idx]
+            if (bbox[0] == 0 and bbox[1] == 0 and bbox[2] == 0 and bbox[3] == 0) or (bbox[0] == 0 and bbox[1] == 0 and bbox[2] == img.shape[1] and bbox[3] == img.shape[0]):
+                cropped_imgs.append(img)
+                continue
+            if self.bg_color == 'black':
+                blank_img = np.zeros((img.shape[0], img.shape[1], 3), np.uint8)
+            elif self.bg_color == 'white':
+                blank_img = np.ones((img.shape[0], img.shape[1], 3), np.uint8) * 255
+            else:
+                raise ValueError('Supported backgroud colors are currently "black" or "white".')
+            blank_img[int(bbox[1]):int(bbox[3]), int(bbox[0]):int(bbox[2]), :] = img[int(bbox[1]):int(bbox[3]), int(bbox[0]):int(bbox[2]), :]
+            cropped_imgs.append(blank_img)
+        
+        results['imgs'] = cropped_imgs
+        if self.preview:
+            for img, idx in zip(results['imgs'], results['frame_inds']):
+                im_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                cv2.imshow(f'img_{idx}', im_rgb)
+                cv2.waitKey(40)
+
+        return results
+
+    def __repr__(self):
+        repr_str = (f'{self.__class__.__name__}('
+                    f'bg_color={self.bg_color})')
+        return repr_str

@@ -5,6 +5,14 @@ import warnings
 from abc import ABCMeta, abstractmethod
 from collections import OrderedDict, defaultdict
 
+import os
+import seaborn as sn
+import pandas as pd
+import matplotlib.pyplot as plt
+from pathlib import Path
+import time
+from sklearn.metrics import confusion_matrix as confusion_matrix_sklearn
+
 import mmcv
 import numpy as np
 import torch
@@ -67,7 +75,8 @@ class BaseDataset(Dataset, metaclass=ABCMeta):
                  modality='RGB',
                  sample_by_class=False,
                  power=0,
-                 dynamic_length=False):
+                 dynamic_length=False,
+                 bbox_ann_path=None,):
         super().__init__()
 
         self.ann_file = ann_file
@@ -81,6 +90,7 @@ class BaseDataset(Dataset, metaclass=ABCMeta):
         self.modality = modality
         self.sample_by_class = sample_by_class
         self.power = power
+        self.bbox_ann_path = bbox_ann_path
 
         # assert not (self.multi_class and self.sample_by_class)
         assert not (self.sample_by_class)
@@ -181,7 +191,7 @@ class BaseDataset(Dataset, metaclass=ABCMeta):
         metrics = metrics if isinstance(metrics, (list, tuple)) else [metrics]
         allowed_metrics = [
             'top_k_accuracy', 'mean_class_accuracy', 'mean_average_precision',
-            'mmit_mean_average_precision'
+            'mmit_mean_average_precision', 'confusion_matrix'
         ]
 
         for metric in metrics:
@@ -220,6 +230,29 @@ class BaseDataset(Dataset, metaclass=ABCMeta):
                 mean_acc = mean_class_accuracy(results, gt_labels)
                 eval_results['mean_class_accuracy'] = mean_acc
                 log_msg = f'\nmean_acc\t{mean_acc:.4f}'
+                print_log(log_msg, logger=logger)
+                continue
+
+            if metric == 'confusion_matrix':
+                pred_results = np.argmax(results, axis=1)
+                conf_matrix = confusion_matrix_sklearn(pred_results, gt_labels,
+                                                       labels=np.arange(7).tolist())
+                # eval_results['confusion_matrix'] = conf_matrix
+                df_cm = pd.DataFrame(conf_matrix)
+                fig = plt.figure(figsize=(20,15))
+                ax = fig.add_subplot()
+                sn.heatmap(df_cm, annot=True, ax=ax)
+                save_path = os.path.join(Path(__file__).parent.parent.parent,
+                                         'work_dirs', 'confusion_matrices')
+                if not os.path.exists(save_path):
+                    os.mkdir(save_path)
+                curr_timestamp = int(time.time())
+                ax.set_xlabel('Predicted')
+                ax.set_ylabel('True')
+                ax.xaxis.set_ticklabels(['drink', 'eat', 'lie', 'sit', 'stand', 'talk_to_phone', 'walk'])
+                ax.yaxis.set_ticklabels(['drink', 'eat', 'lie', 'sit', 'stand', 'talk_to_phone', 'walk'])
+                fig.savefig(os.path.join(save_path, f'{curr_timestamp}.png'))
+                log_msg = f'\n{conf_matrix}'
                 print_log(log_msg, logger=logger)
                 continue
 
@@ -267,6 +300,11 @@ class BaseDataset(Dataset, metaclass=ABCMeta):
     def prepare_test_frames(self, idx):
         """Prepare the frames for testing given the index."""
         results = copy.deepcopy(self.video_infos[idx])
+        if self.bbox_ann_path is not None:
+            label_class = results['filename'].split('/')[-2]
+            video_name = results['filename'].split('/')[-1].split('.')[0]
+            video_bbox_ann = os.path.join(self.bbox_ann_path, label_class, video_name + '.txt')
+            results['bbox_ann'] = video_bbox_ann
         results['modality'] = self.modality
         results['start_index'] = self.start_index
 
