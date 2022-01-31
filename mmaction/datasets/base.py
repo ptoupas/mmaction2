@@ -11,7 +11,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
 import time
-from sklearn.metrics import confusion_matrix as confusion_matrix_sklearn
 
 import mmcv
 import numpy as np
@@ -20,7 +19,8 @@ from mmcv.utils import print_log
 from torch.utils.data import Dataset
 
 from ..core import (mean_average_precision, mean_class_accuracy,
-                    mmit_mean_average_precision, top_k_accuracy)
+                    mmit_mean_average_precision, top_k_accuracy,
+                    confusion_matrix)
 from .pipelines import Compose
 
 
@@ -227,16 +227,24 @@ class BaseDataset(Dataset, metaclass=ABCMeta):
                 continue
 
             if metric == 'mean_class_accuracy':
-                mean_acc = mean_class_accuracy(results, gt_labels)
+                mean_acc, class_acc = mean_class_accuracy(results, gt_labels)
                 eval_results['mean_class_accuracy'] = mean_acc
                 log_msg = f'\nmean_acc\t{mean_acc:.4f}'
+                print_log(log_msg, logger=logger)
+                log_msg = f'\nper_class_acc\t'
+                for i, acc in enumerate(class_acc):
+                    log_msg += f'{i}: {acc:.4f}  '
                 print_log(log_msg, logger=logger)
                 continue
 
             if metric == 'confusion_matrix':
                 pred_results = np.argmax(results, axis=1)
-                conf_matrix = confusion_matrix_sklearn(pred_results, gt_labels,
-                                                       labels=np.arange(7).tolist())
+                # Note that this implementation of confusion matrix is different
+                # from the one in sklearn. The True labels here are on x-axis 
+                # and the Predicted labels here are on y-axis. In sklearn, these
+                # two axes are switched.
+                conf_matrix = confusion_matrix(pred_results, gt_labels,
+                                               labels=np.arange(7).tolist())
                 # eval_results['confusion_matrix'] = conf_matrix
                 df_cm = pd.DataFrame(conf_matrix)
                 fig = plt.figure(figsize=(20,15))
@@ -247,8 +255,8 @@ class BaseDataset(Dataset, metaclass=ABCMeta):
                 if not os.path.exists(save_path):
                     os.mkdir(save_path)
                 curr_timestamp = int(time.time())
-                ax.set_xlabel('Predicted')
-                ax.set_ylabel('True')
+                ax.set_xlabel('True')
+                ax.set_ylabel('Predicted')
                 ax.xaxis.set_ticklabels(['drink', 'eat', 'lie', 'sit', 'stand', 'talk_to_phone', 'walk'])
                 ax.yaxis.set_ticklabels(['drink', 'eat', 'lie', 'sit', 'stand', 'talk_to_phone', 'walk'])
                 fig.savefig(os.path.join(save_path, f'{curr_timestamp}.png'))

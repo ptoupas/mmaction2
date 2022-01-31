@@ -2,7 +2,7 @@
 import numpy as np
 
 
-def confusion_matrix(y_pred, y_real, normalize=None):
+def confusion_matrix(y_pred, y_real, labels=None, normalize=None):
     """Compute confusion matrix.
 
     Args:
@@ -38,7 +38,10 @@ def confusion_matrix(y_pred, y_real, normalize=None):
         raise TypeError(
             f'y_real dtype must be np.int64, but got {y_real.dtype}')
 
-    label_set = np.unique(np.concatenate((y_pred, y_real)))
+    if labels is None:
+        label_set = np.unique(np.concatenate((y_pred, y_real)))
+    else:
+        label_set = np.array(labels)
     num_labels = len(label_set)
     max_label = label_set[-1]
     label_map = np.zeros(max_label + 1, dtype=np.int64)
@@ -82,10 +85,10 @@ def mean_class_accuracy(scores, labels):
     cls_cnt = cf_mat.sum(axis=1)
     cls_hit = np.diag(cf_mat)
 
-    mean_class_acc = np.mean(
-        [hit / cnt if cnt else 0.0 for cnt, hit in zip(cls_cnt, cls_hit)])
+    per_class_acc = [hit / cnt if cnt else 0.0 for cnt, hit in zip(cls_cnt, cls_hit)]
+    mean_class_acc = np.mean(per_class_acc)
 
-    return mean_class_acc
+    return mean_class_acc, per_class_acc
 
 
 def top_k_classes(scores, labels, k=10, mode='accurate'):

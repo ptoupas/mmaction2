@@ -46,7 +46,7 @@ def main():
     data = open(args.datalist).readlines()
     labels = [int(x.strip().split()[-1]) for x in data]
 
-    mean_class_acc = mean_class_accuracy(weighted_scores, labels)
+    mean_class_acc, _ = mean_class_accuracy(weighted_scores, labels)
     top_1_acc, top_5_acc = top_k_accuracy(weighted_scores, labels, (1, 5))
     print(f'Mean Class Accuracy: {mean_class_acc:.04f}')
     print(f'Top 1 Accuracy: {top_1_acc:.04f}')
