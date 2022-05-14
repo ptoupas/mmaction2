@@ -1,5 +1,161 @@
 ## Changelog
 
+### 0.24.0 (05/05/2022)
+
+**Highlights**
+
+- Support different seeds
+
+**New Features**
+
+- Add lateral norm in multigrid config ([#1567](https://github.com/open-mmlab/mmaction2/pull/1567))
+- Add openpose 25 joints in graph config ([#1578](https://github.com/open-mmlab/mmaction2/pull/1578))
+- Support MLU Backend ([#1608](https://github.com/open-mmlab/mmaction2/pull/1608))
+
+**Bug and Typo Fixes**
+
+- Fix local_rank ([#1558](https://github.com/open-mmlab/mmaction2/pull/1558))
+- Fix install typo ([#1571](https://github.com/open-mmlab/mmaction2/pull/1571))
+- Fix the inference API doc ([#1580](https://github.com/open-mmlab/mmaction2/pull/1580))
+- Fix zh-CN demo.md and getting_started.md ([#1587](https://github.com/open-mmlab/mmaction2/pull/1587))
+- Remove Recommonmark ([#1595](https://github.com/open-mmlab/mmaction2/pull/1595))
+- Fix inference with ndarray ([#1603](https://github.com/open-mmlab/mmaction2/pull/1603))
+- Fix the log error when `IterBasedRunner` is used ([#1606](https://github.com/open-mmlab/mmaction2/pull/1606))
+
+### 0.23.0 (04/01/2022)
+
+**Highlights**
+
+- Support different seeds
+- Provide multi-node training & testing script
+- Update error log
+
+**New Features**
+
+- Support different seeds([#1502](https://github.com/open-mmlab/mmaction2/pull/1502))
+- Provide multi-node training & testing script([#1521](https://github.com/open-mmlab/mmaction2/pull/1521))
+- Update error log([#1546](https://github.com/open-mmlab/mmaction2/pull/1546))
+
+**Documentations**
+
+- Update gpus in Slowfast readme([#1497](https://github.com/open-mmlab/mmaction2/pull/1497))
+- Fix work_dir in multigrid config([#1498](https://github.com/open-mmlab/mmaction2/pull/1498))
+- Add sub bn docs([#1503](https://github.com/open-mmlab/mmaction2/pull/1503))
+- Add shortcycle sampler docs([#1513](https://github.com/open-mmlab/mmaction2/pull/1513))
+- Update Windows Declaration([#1520](https://github.com/open-mmlab/mmaction2/pull/1520))
+- Update the link for ST-GCN([#1544](https://github.com/open-mmlab/mmaction2/pull/1544))
+- Update install commands([#1549](https://github.com/open-mmlab/mmaction2/pull/1549))
+
+**Bug and Typo Fixes**
+
+- Update colab tutorial install cmds([#1522](https://github.com/open-mmlab/mmaction2/pull/1522))
+- Fix num_iters_per_epoch in analyze_logs.py([#1530](https://github.com/open-mmlab/mmaction2/pull/1530))
+- Fix distributed_sampler([#1532](https://github.com/open-mmlab/mmaction2/pull/1532))
+- Fix cd dir error([#1545](https://github.com/open-mmlab/mmaction2/pull/1545))
+- Update arg names([#1548](https://github.com/open-mmlab/mmaction2/pull/1548))
+
+**ModelZoo**
+
+### 0.22.0 (03/05/2022)
+
+**Highlights**
+
+- Support Multigrid training strategy
+- Support CPU training
+- Support audio demo
+- Support topk customizing in models/heads/base.py
+
+**New Features**
+
+- Support Multigrid training strategy([#1378](https://github.com/open-mmlab/mmaction2/pull/1378))
+- Support STGCN in demo_skeleton.py([#1391](https://github.com/open-mmlab/mmaction2/pull/1391))
+- Support CPU training([#1407](https://github.com/open-mmlab/mmaction2/pull/1407))
+- Support audio demo([#1425](https://github.com/open-mmlab/mmaction2/pull/1425))
+- Support topk customizing in models/heads/base.py([#1452](https://github.com/open-mmlab/mmaction2/pull/1452))
+
+**Documentations**
+
+- Add OpenMMLab platform([#1393](https://github.com/open-mmlab/mmaction2/pull/1393))
+- Update links([#1394](https://github.com/open-mmlab/mmaction2/pull/1394))
+- Update readme in configs([#1404](https://github.com/open-mmlab/mmaction2/pull/1404))
+- Update instructions to install mmcv-full([#1426](https://github.com/open-mmlab/mmaction2/pull/1426))
+- Add shortcut([#1433](https://github.com/open-mmlab/mmaction2/pull/1433))
+- Update modelzoo([#1439](https://github.com/open-mmlab/mmaction2/pull/1439))
+- add video_structuralize in readme([#1455](https://github.com/open-mmlab/mmaction2/pull/1455))
+- Update OpenMMLab repo information([#1482](https://github.com/open-mmlab/mmaction2/pull/1482))
+
+**Bug and Typo Fixes**
+
+- Update train.py([#1375](https://github.com/open-mmlab/mmaction2/pull/1375))
+- Fix printout bug([#1382]((https://github.com/open-mmlab/mmaction2/pull/1382)))
+- Update multi processing setting([#1395](https://github.com/open-mmlab/mmaction2/pull/1395))
+- Setup multi processing both in train and test([#1405](https://github.com/open-mmlab/mmaction2/pull/1405))
+- Fix bug in nondistributed multi-gpu training([#1406](https://github.com/open-mmlab/mmaction2/pull/1406))
+- Add variable fps in  ava_dataset.py([#1409](https://github.com/open-mmlab/mmaction2/pull/1409))
+- Only support distributed training([#1414](https://github.com/open-mmlab/mmaction2/pull/1414))
+- Set test_mode for AVA configs([#1432](https://github.com/open-mmlab/mmaction2/pull/1432))
+- Support single label([#1434](https://github.com/open-mmlab/mmaction2/pull/1434))
+- Add check copyright([#1447](https://github.com/open-mmlab/mmaction2/pull/1447))
+- Support Windows CI([#1448](https://github.com/open-mmlab/mmaction2/pull/1448))
+- Fix wrong device of class_weight in models/losses/cross_entropy_loss.py([#1457](https://github.com/open-mmlab/mmaction2/pull/1457))
+- Fix bug caused by distributed([#1459](https://github.com/open-mmlab/mmaction2/pull/1459))
+- Update readme([#1460](https://github.com/open-mmlab/mmaction2/pull/1460))
+- Fix lint caused by colab automatic upload([#1461](https://github.com/open-mmlab/mmaction2/pull/1461))
+- Refine CI([#1471](https://github.com/open-mmlab/mmaction2/pull/1471))
+- Update pre-commit([#1474](https://github.com/open-mmlab/mmaction2/pull/1474))
+- Add deprecation message for deploy tool([#1483](https://github.com/open-mmlab/mmaction2/pull/1483))
+
+**ModelZoo**
+
+- Support slowfast_steplr([#1421](https://github.com/open-mmlab/mmaction2/pull/1421))
+
+### 0.21.0 (31/12/2021)
+
+**Highlights**
+
+- Support 2s-AGCN
+- Support publish models in Windows
+- Improve some sthv1 related models
+- Support BABEL
+
+**New Features**
+
+- Support 2s-AGCN([#1248](https://github.com/open-mmlab/mmaction2/pull/1248))
+- Support skip postproc in ntu_pose_extraction([#1295](https://github.com/open-mmlab/mmaction2/pull/1295))
+- Support publish models in Windows([#1325](https://github.com/open-mmlab/mmaction2/pull/1325))
+- Add copyright checkhook in pre-commit-config([#1344](https://github.com/open-mmlab/mmaction2/pull/1344))
+
+**Documentations**
+
+- Add MMFlow ([#1273](https://github.com/open-mmlab/mmaction2/pull/1273))
+- Revise README.md and add projects.md ([#1286](https://github.com/open-mmlab/mmaction2/pull/1286))
+- Add 2s-AGCN in Updates([#1289](https://github.com/open-mmlab/mmaction2/pull/1289))
+- Add MMFewShot([#1300](https://github.com/open-mmlab/mmaction2/pull/1300))
+- Add MMHuman3d([#1304](https://github.com/open-mmlab/mmaction2/pull/1304))
+- Update pre-commit([#1313](https://github.com/open-mmlab/mmaction2/pull/1313))
+- Use share menu from the theme instead([#1328](https://github.com/open-mmlab/mmaction2/pull/1328))
+- Update installation command([#1340](https://github.com/open-mmlab/mmaction2/pull/1340))
+
+**Bug and Typo Fixes**
+
+- Update the inference part in notebooks([#1256](https://github.com/open-mmlab/mmaction2/pull/1256))
+- Update the map_location([#1262]((https://github.com/open-mmlab/mmaction2/pull/1262)))
+- Fix bug that start_index is not used in RawFrameDecode([#1278](https://github.com/open-mmlab/mmaction2/pull/1278))
+- Fix bug in init_random_seed([#1282](https://github.com/open-mmlab/mmaction2/pull/1282))
+- Fix bug in setup.py([#1303](https://github.com/open-mmlab/mmaction2/pull/1303))
+- Fix interrogate error in workflows([#1305](https://github.com/open-mmlab/mmaction2/pull/1305))
+- Fix typo in slowfast config([#1309](https://github.com/open-mmlab/mmaction2/pull/1309))
+- Cancel previous runs that are not completed([#1327](https://github.com/open-mmlab/mmaction2/pull/1327))
+- Fix missing skip_postproc parameter([#1347](https://github.com/open-mmlab/mmaction2/pull/1347))
+- Update ssn.py([#1355](https://github.com/open-mmlab/mmaction2/pull/1355))
+- Use latest youtube-dl([#1357](https://github.com/open-mmlab/mmaction2/pull/1357))
+- Fix test-best([#1362](https://github.com/open-mmlab/mmaction2/pull/1362))
+
+**ModelZoo**
+
+- Improve some sthv1 related models([#1306](https://github.com/open-mmlab/mmaction2/pull/1306))
+- Support BABEL([#1332](https://github.com/open-mmlab/mmaction2/pull/1332))
+
 ### 0.20.0 (07/10/2021)
 
 **Highlights**

@@ -9,15 +9,16 @@ from .builder import (BACKBONES, DETECTORS, HEADS, LOCALIZERS, LOSSES, NECKS,
                       build_recognizer)
 from .common import (LFB, TAM, Conv2plus1d, ConvAudio,
                      DividedSpatialAttentionWithNorm,
-                     DividedTemporalAttentionWithNorm, FFNWithNorm)
+                     DividedTemporalAttentionWithNorm, FFNWithNorm,
+                     SubBatchNorm3D)
 from .heads import (ACRNHead, AudioTSNHead, AVARoIHead, BaseHead, BBoxHeadAVA,
                     FBOHead, I3DHead, LFBInferHead, SlowFastHead, STGCNHead,
                     TimeSformerHead, TPNHead, TRNHead, TSMHead, TSNHead,
                     X3DHead)
 from .localizers import BMN, PEM, TEM
 from .losses import (BCELossWithLogits, BinaryLogisticRegressionLoss, BMNLoss,
-                     CrossEntropyLoss, HVULoss, NLLLoss, OHEMHingeLoss,
-                     SSNLoss)
+                     CBFocalLoss, CrossEntropyLoss, HVULoss, NLLLoss,
+                     OHEMHingeLoss, SSNLoss)
 from .necks import TPN
 from .recognizers import (AudioRecognizer, BaseRecognizer, Recognizer2D,
                           Recognizer3D)
@@ -40,5 +41,5 @@ __all__ = [
     'FBOHead', 'LFBInferHead', 'TRNHead', 'NECKS', 'TimeSformer',
     'TimeSformerHead', 'DividedSpatialAttentionWithNorm',
     'DividedTemporalAttentionWithNorm', 'FFNWithNorm', 'ACRNHead', 'BaseGCN',
-    'SkeletonGCN'
+    'SkeletonGCN', 'CBFocalLoss', 'SubBatchNorm3D'
 ]

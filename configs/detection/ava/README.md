@@ -1,33 +1,24 @@
 # AVA
 
+[Ava: A video dataset of spatio-temporally localized atomic visual actions](https://openaccess.thecvf.com/content_cvpr_2018/html/Gu_AVA_A_Video_CVPR_2018_paper.html)
+
+<!-- [ALGORITHM] -->
+
 <div align="center">
   <img src="https://github.com/open-mmlab/mmaction2/raw/master/resources/spatio-temporal-det.gif" width="800px"/>
 </div>
 
-## Introduction
+## Abstract
 
-<!-- [DATASET] -->
+<!-- [ABSTRACT] -->
 
-```BibTeX
-@inproceedings{gu2018ava,
-  title={Ava: A video dataset of spatio-temporally localized atomic visual actions},
-  author={Gu, Chunhui and Sun, Chen and Ross, David A and Vondrick, Carl and Pantofaru, Caroline and Li, Yeqing and Vijayanarasimhan, Sudheendra and Toderici, George and Ricco, Susanna and Sukthankar, Rahul and others},
-  booktitle={Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition},
-  pages={6047--6056},
-  year={2018}
-}
-```
+This paper introduces a video dataset of spatio-temporally localized Atomic Visual Actions (AVA). The AVA dataset densely annotates 80 atomic visual actions in 430 15-minute video clips, where actions are localized in space and time, resulting in 1.58M action labels with multiple labels per person occurring frequently. The key characteristics of our dataset are: (1) the definition of atomic visual actions, rather than composite actions; (2) precise spatio-temporal annotations with possibly multiple annotations for each person; (3) exhaustive annotation of these atomic actions over 15-minute video clips; (4) people temporally linked across consecutive segments; and (5) using movies to gather a varied set of action representations. This departs from existing datasets for spatio-temporal action recognition, which typically provide sparse annotations for composite actions in short video clips. We will release the dataset publicly.
+AVA, with its realistic scene and action complexity, exposes the intrinsic difficulty of action recognition. To benchmark this, we present a novel approach for action localization that builds upon the current state-of-the-art methods, and demonstrates better performance on JHMDB and UCF101-24 categories. While setting a new state of the art on existing datasets, the overall results on AVA are low at 15.6% mAP, underscoring the need for developing new approaches for video understanding.
 
-<!-- [ALGORITHM] -->
-
-```BibTeX
-@article{duan2020omni,
-  title={Omni-sourced Webly-supervised Learning for Video Recognition},
-  author={Duan, Haodong and Zhao, Yue and Xiong, Yuanjun and Liu, Wentao and Lin, Dahua},
-  journal={arXiv preprint arXiv:2003.13042},
-  year={2020}
-}
-```
+<!-- [IMAGE] -->
+<div align=center>
+<img src="https://user-images.githubusercontent.com/34324155/143015933-36eb7abd-d38f-4be6-a327-4d34c6f4edc1.png" width="800"/>
+</div>
 
 <!-- [ALGORITHM] -->
 
@@ -41,7 +32,7 @@
 }
 ```
 
-## Model Zoo
+## Results and Models
 
 ### AVA2.1
 
@@ -129,3 +120,26 @@ python tools/test.py configs/detection/ava/slowonly_kinetics_pretrained_r50_8x8x
 ```
 
 For more details and optional arguments infos, you can refer to **Test a dataset** part in [getting_started](/docs/getting_started.md#test-a-dataset) .
+
+## Citation
+
+<!-- [DATASET] -->
+
+```BibTeX
+@inproceedings{gu2018ava,
+  title={Ava: A video dataset of spatio-temporally localized atomic visual actions},
+  author={Gu, Chunhui and Sun, Chen and Ross, David A and Vondrick, Carl and Pantofaru, Caroline and Li, Yeqing and Vijayanarasimhan, Sudheendra and Toderici, George and Ricco, Susanna and Sukthankar, Rahul and others},
+  booktitle={Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition},
+  pages={6047--6056},
+  year={2018}
+}
+```
+
+```BibTeX
+@article{duan2020omni,
+  title={Omni-sourced Webly-supervised Learning for Video Recognition},
+  author={Duan, Haodong and Zhao, Yue and Xiong, Yuanjun and Liu, Wentao and Lin, Dahua},
+  journal={arXiv preprint arXiv:2003.13042},
+  year={2020}
+}
+```

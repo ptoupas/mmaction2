@@ -1,19 +1,22 @@
 # ResNet for Audio
 
-## Introduction
+[Audiovisual SlowFast Networks for Video Recognition](https://arxiv.org/abs/2001.08740)
 
 <!-- [ALGORITHM] -->
 
-```BibTeX
-@article{xiao2020audiovisual,
-  title={Audiovisual SlowFast Networks for Video Recognition},
-  author={Xiao, Fanyi and Lee, Yong Jae and Grauman, Kristen and Malik, Jitendra and Feichtenhofer, Christoph},
-  journal={arXiv preprint arXiv:2001.08740},
-  year={2020}
-}
-```
+## Abstract
 
-## Model Zoo
+<!-- [ABSTRACT] -->
+
+We present Audiovisual SlowFast Networks, an archi-
+tecture for integrated audiovisual perception. AVSlowFast has Slow and Fast visual pathways that are deeply inte- grated with a Faster Audio pathway to model vision and sound in a unified representation. We fuse audio and vi- sual features at multiple layers, enabling audio to con- tribute to the formation of hierarchical audiovisual con- cepts. To overcome training difficulties that arise from dif- ferent learning dynamics for audio and visual modalities, we introduce DropPathway, which randomly drops the Au- dio pathway during training as an effective regularization technique. Inspired by prior studies in neuroscience, we perform hierarchical audiovisual synchronization to learn joint audiovisual features. We report state-of-the-art results on six video action classification and detection datasets, perform detailed ablation studies, and show the gener- alization of AVSlowFast to learn self-supervised audiovi- sual features. Code will be made available at: https: //github.com/facebookresearch/SlowFast.
+
+<!-- [IMAGE] -->
+<div align=center>
+<img src="https://user-images.githubusercontent.com/30782254/147050415-a30ad32a-ce52-452d-ac3d-91058c8d0cc9.png" width="800"/>
+</div>
+
+## Results and Models
 
 ### Kinetics-400
 
@@ -80,3 +83,14 @@ python tools/analysis/report_accuracy.py --scores ${AUDIO_RESULT_PKL} ${VISUAL_R
 
 + AUDIO_RESULT_PKL: The saved output file of `tools/test.py` by the argument `--out`.
 + VISUAL_RESULT_PKL: The saved output file of `tools/test.py` by the argument `--out`.
+
+## Citation
+
+```BibTeX
+@article{xiao2020audiovisual,
+  title={Audiovisual SlowFast Networks for Video Recognition},
+  author={Xiao, Fanyi and Lee, Yong Jae and Grauman, Kristen and Malik, Jitendra and Feichtenhofer, Christoph},
+  journal={arXiv preprint arXiv:2001.08740},
+  year={2020}
+}
+```

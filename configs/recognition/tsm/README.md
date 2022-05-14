@@ -1,30 +1,21 @@
 # TSM
 
-## Introduction
+[TSM: Temporal Shift Module for Efficient Video Understanding](https://openaccess.thecvf.com/content_ICCV_2019/html/Lin_TSM_Temporal_Shift_Module_for_Efficient_Video_Understanding_ICCV_2019_paper.html)
 
 <!-- [ALGORITHM] -->
 
-```BibTeX
-@inproceedings{lin2019tsm,
-  title={TSM: Temporal Shift Module for Efficient Video Understanding},
-  author={Lin, Ji and Gan, Chuang and Han, Song},
-  booktitle={Proceedings of the IEEE International Conference on Computer Vision},
-  year={2019}
-}
-```
+## Abstract
 
-<!-- [BACKBONE] -->
+<!-- [ABSTRACT] -->
 
-```BibTeX
-@article{NonLocal2018,
-  author =   {Xiaolong Wang and Ross Girshick and Abhinav Gupta and Kaiming He},
-  title =    {Non-local Neural Networks},
-  journal =  {CVPR},
-  year =     {2018}
-}
-```
+The explosive growth in video streaming gives rise to challenges on performing video understanding at high accuracy and low computation cost. Conventional 2D CNNs are computationally cheap but cannot capture temporal relationships; 3D CNN based methods can achieve good performance but are computationally intensive, making it expensive to deploy. In this paper, we propose a generic and effective Temporal Shift Module (TSM) that enjoys both high efficiency and high performance. Specifically, it can achieve the performance of 3D CNN but maintain 2D CNN's complexity. TSM shifts part of the channels along the temporal dimension; thus facilitate information exchanged among neighboring frames. It can be inserted into 2D CNNs to achieve temporal modeling at zero computation and zero parameters. We also extended TSM to online setting, which enables real-time low-latency online video recognition and video object detection. TSM is accurate and efficient: it ranks the first place on the Something-Something leaderboard upon publication; on Jetson Nano and Galaxy Note8, it achieves a low latency of 13ms and 35ms for online video recognition.
 
-## Model Zoo
+<!-- [IMAGE] -->
+<div align=center>
+<img src="https://user-images.githubusercontent.com/34324155/143019083-abc0de39-9ea1-4175-be5c-073c90de64c3.png" width="800"/>
+</div>
+
+## Results and Models
 
 ### Kinetics-400
 
@@ -64,8 +55,8 @@
 |[tsm_r50_ptv_randaugment_1x1x8_50e_sthv1_rgb](/configs/recognition/tsm/tsm_r50_ptv_randaugment_1x1x8_50e_sthv1_rgb.py) |height 100|8| ResNet50 | ImageNet| 47.65 / 48.66 | 76.67 / 77.41 |[45.50 / 47.33](https://github.com/mit-han-lab/temporal-shift-module/tree/8d53d6fda40bea2f1b37a6095279c4b454d672bd#training)|[74.34 / 76.60](https://github.com/mit-han-lab/temporal-shift-module/tree/8d53d6fda40bea2f1b37a6095279c4b454d672bd#training)| 7077| [ckpt](https://download.openmmlab.com/mmaction/recognition/tsm/tsm_r50_ptv_randaugment_1x1x8_50e_sthv1_rgb/tsm_r50_ptv_randaugment_1x1x8_50e_sthv1_rgb-ee93e5e3.pth) | [log](https://download.openmmlab.com/mmaction/recognition/tsm/tsm_r50_ptv_randaugment_1x1x8_50e_sthv1_rgb/tsm_r50_ptv_randaugment_1x1x8_50e_sthv1_rgb.log) | [json](https://download.openmmlab.com/mmaction/recognition/tsm/tsm_r50_ptv_randaugment_1x1x8_50e_sthv1_rgb/tsm_r50_ptv_randaugment_1x1x8_50e_sthv1_rgb.json) |
 |[tsm_r50_ptv_augmix_1x1x8_50e_sthv1_rgb](/configs/recognition/tsm/tsm_r50_ptv_augmix_1x1x8_50e_sthv1_rgb.py) |height 100|8| ResNet50 | ImageNet| 46.26 / 47.68 | 75.92 / 76.49 |[45.50 / 47.33](https://github.com/mit-han-lab/temporal-shift-module/tree/8d53d6fda40bea2f1b37a6095279c4b454d672bd#training)|[74.34 / 76.60](https://github.com/mit-han-lab/temporal-shift-module/tree/8d53d6fda40bea2f1b37a6095279c4b454d672bd#training)| 7077| [ckpt](https://download.openmmlab.com/mmaction/recognition/tsm/tsm_r50_ptv_augmix_1x1x8_50e_sthv1_rgb/tsm_r50_ptv_augmix_1x1x8_50e_sthv1_rgb-4f4f4740.pth) | [log](https://download.openmmlab.com/mmaction/recognition/tsm/tsm_r50_ptv_augmix_1x1x8_50e_sthv1_rgb/tsm_r50_ptv_augmix_1x1x8_50e_sthv1_rgb.log) | [json](https://download.openmmlab.com/mmaction/recognition/tsm/tsm_r50_ptv_augmix_1x1x8_50e_sthv1_rgb/tsm_r50_ptv_augmix_1x1x8_50e_sthv1_rgb.json) |
 |[tsm_r50_flip_randaugment_1x1x8_50e_sthv1_rgb](/configs/recognition/tsm/tsm_r50_flip_randaugment_1x1x8_50e_sthv1_rgb.py) |height 100|8| ResNet50 | ImageNet| 47.85 / 50.31|76.78 / 78.18|[45.50 / 47.33](https://github.com/mit-han-lab/temporal-shift-module/tree/8d53d6fda40bea2f1b37a6095279c4b454d672bd#training)|[74.34 / 76.60](https://github.com/mit-han-lab/temporal-shift-module/tree/8d53d6fda40bea2f1b37a6095279c4b454d672bd#training)| 7077| [ckpt](https://download.openmmlab.com/mmaction/recognition/tsm/tsm_r50_flip_randaugment_1x1x8_50e_sthv1_rgb/tsm_r50_flip_randaugment_1x1x8_50e_sthv1_rgb_20210324-76937692.pth) | [log](https://download.openmmlab.com/mmaction/recognition/tsm/tsm_r50_flip_randaugment_1x1x8_50e_sthv1_rgb/tsm_r50_flip_randaugment_1x1x8_50e_sthv1_rgb.log)| [json](https://download.openmmlab.com/mmaction/recognition/tsm/tsm_r50_flip_randaugment_1x1x8_50e_sthv1_rgb/tsm_r50_flip_randaugment_1x1x8_50e_sthv1_rgb.json)|
-|[tsm_r50_1x1x16_50e_sthv1_rgb](/configs/recognition/tsm/tsm_r50_1x1x16_50e_sthv1_rgb.py)|height 100|8| ResNet50 | ImageNet|47.62 / 49.28|76.63 / 77.82|[47.05 / 48.61](https://github.com/mit-han-lab/temporal-shift-module/tree/8d53d6fda40bea2f1b37a6095279c4b454d672bd#training)|[76.40 / 77.96](https://github.com/mit-han-lab/temporal-shift-module/tree/8d53d6fda40bea2f1b37a6095279c4b454d672bd#training)|10390|[ckpt](https://download.openmmlab.com/mmaction/recognition/tsm/tsm_r50_1x1x16_50e_sthv1_rgb/tsm_r50_1x1x16_50e_sthv1_rgb_20201010-17fa49f6.pth)|[log](https://download.openmmlab.com/mmaction/recognition/tsm/tsm_r50_1x1x16_50e_sthv1_rgb/20201010_221240.log)|[json](https://download.openmmlab.com/mmaction/recognition/tsm/tsm_r50_1x1x16_50e_sthv1_rgb/20201010_221240.log.json)|
-|[tsm_r101_1x1x8_50e_sthv1_rgb](/configs/recognition/tsm/tsm_r101_1x1x8_50e_sthv1_rgb.py)|height 100|8| ResNet50 | ImageNet|45.72 / 48.43|74.67 / 76.72|[46.64 / 48.13](https://github.com/mit-han-lab/temporal-shift-module/tree/8d53d6fda40bea2f1b37a6095279c4b454d672bd#training)|[75.40 / 77.31](https://github.com/mit-han-lab/temporal-shift-module/tree/8d53d6fda40bea2f1b37a6095279c4b454d672bd#training)|9800|[ckpt](https://download.openmmlab.com/mmaction/recognition/tsm/tsm_r101_1x1x8_50e_sthv1_rgb/tsm_r101_1x1x8_50e_sthv1_rgb_20201010-43fedf2e.pth)|[log](https://download.openmmlab.com/mmaction/recognition/tsm/tsm_r101_1x1x8_50e_sthv1_rgb/20201010_224055.log)|[json](https://download.openmmlab.com/mmaction/recognition/tsm/tsm_r101_1x1x8_50e_sthv1_rgb/20201010_224055.log.json)|
+|[tsm_r50_1x1x16_50e_sthv1_rgb](/configs/recognition/tsm/tsm_r50_1x1x16_50e_sthv1_rgb.py)|height 100|8| ResNet50 | ImageNet|47.77 / 49.03|76.82 / 77.83|[47.05 / 48.61](https://github.com/mit-han-lab/temporal-shift-module/tree/8d53d6fda40bea2f1b37a6095279c4b454d672bd#training)|[76.40 / 77.96](https://github.com/mit-han-lab/temporal-shift-module/tree/8d53d6fda40bea2f1b37a6095279c4b454d672bd#training)|10390|[ckpt](https://download.openmmlab.com/mmaction/recognition/tsm/tsm_r50_1x1x16_50e_sthv1_rgb/tsm_r50_1x1x16_50e_sthv1_rgb_20211202-b922e5d2.pth)|[log](https://download.openmmlab.com/mmaction/recognition/tsm/tsm_r50_1x1x16_50e_sthv1_rgb/tsm_r50_1x1x16_50e_sthv1_rgb.log)|[json](https://download.openmmlab.com/mmaction/recognition/tsm/tsm_r50_1x1x16_50e_sthv1_rgb/tsm_r50_1x1x16_50e_sthv1_rgb.json)|
+|[tsm_r101_1x1x8_50e_sthv1_rgb](/configs/recognition/tsm/tsm_r101_1x1x8_50e_sthv1_rgb.py)|height 100|8| ResNet50 | ImageNet|46.09 / 48.59|75.41 / 77.10|[46.64 / 48.13](https://github.com/mit-han-lab/temporal-shift-module/tree/8d53d6fda40bea2f1b37a6095279c4b454d672bd#training)|[75.40 / 77.31](https://github.com/mit-han-lab/temporal-shift-module/tree/8d53d6fda40bea2f1b37a6095279c4b454d672bd#training)|9800|[ckpt](https://download.openmmlab.com/mmaction/recognition/tsm/tsm_r101_1x1x8_50e_sthv1_rgb/tsm_r101_1x1x8_50e_sthv1_rgb_20211202-49970a5b.pth)|[log](https://download.openmmlab.com/mmaction/recognition/tsm/tsm_r101_1x1x8_50e_sthv1_rgb/tsm_r101_1x1x8_50e_sthv1_rgb.log)|[json](https://download.openmmlab.com/mmaction/recognition/tsm/tsm_r101_1x1x8_50e_sthv1_rgb/tsm_r101_1x1x8_50e_sthv1_rgb.json)|
 
 ### Something-Something V2
 
@@ -177,3 +168,25 @@ python tools/test.py configs/recognition/tsm/tsm_r50_1x1x8_50e_kinetics400_rgb.p
 ```
 
 For more details, you can refer to **Test a dataset** part in [getting_started](/docs/getting_started.md#test-a-dataset).
+
+## Citation
+
+```BibTeX
+@inproceedings{lin2019tsm,
+  title={TSM: Temporal Shift Module for Efficient Video Understanding},
+  author={Lin, Ji and Gan, Chuang and Han, Song},
+  booktitle={Proceedings of the IEEE International Conference on Computer Vision},
+  year={2019}
+}
+```
+
+<!-- [BACKBONE] -->
+
+```BibTeX
+@article{NonLocal2018,
+  author =   {Xiaolong Wang and Ross Girshick and Abhinav Gupta and Kaiming He},
+  title =    {Non-local Neural Networks},
+  journal =  {CVPR},
+  year =     {2018}
+}
+```

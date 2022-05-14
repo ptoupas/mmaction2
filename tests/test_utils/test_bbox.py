@@ -7,22 +7,16 @@ import torch
 
 from mmaction.core.bbox import bbox2result, bbox_target
 from mmaction.datasets import AVADataset
-from mmaction.utils import import_module_error_func
-
-try:
-    from mmdet.core.bbox import build_assigner, build_sampler
-except (ImportError, ModuleNotFoundError):
-
-    @import_module_error_func('mmdet')
-    def build_assigner(*args, **kwargs):
-        pass
-
-    @import_module_error_func('mmdet')
-    def build_sampler(*args, **kwargs):
-        pass
 
 
 def test_assigner_sampler():
+    try:
+        from mmdet.core.bbox import build_assigner, build_sampler
+    except (ImportError, ModuleNotFoundError):
+        raise ImportError(
+            'Failed to import `build_assigner` and `build_sampler` '
+            'from `mmdet.core.bbox`. The two APIs are required for '
+            'the testing in `test_bbox.py`! ')
     data_prefix = osp.normpath(
         osp.join(osp.dirname(__file__), '../data/eval_detection'))
     ann_file = osp.join(data_prefix, 'gt.csv')
@@ -94,6 +88,7 @@ def test_bbox2result():
                            [0.079, 1.269, -0.263, -0.538],
                            [-0.853, 0.391, 0.103, 0.398]])
     num_classes = 4
+    #  Test for multi-label
     result = bbox2result(bboxes, labels, num_classes)
     assert np.all(
         np.isclose(
@@ -113,6 +108,22 @@ def test_bbox2result():
         np.isclose(
             result[2],
             np.array([[0.072, 0.47, 0.84, 0.898, 1.24],
+                      [0.236, 0.189, 0.689, 0.74, 0.438],
+                      [0.024, 0.398, 0.776, 0.719, 0.398]])))
+
+    # Test for single-label
+    result = bbox2result(bboxes, labels, num_classes, -1.0)
+    assert np.all(
+        np.isclose(result[0], np.array([[0.375, 0.371, 0.726, 0.804, 1.269]])))
+    assert np.all(
+        np.isclose(
+            result[1],
+            np.array([[0.23, 0.215, 0.781, 0.534, 0.037],
+                      [0.195, 0.128, 0.643, 0.944, 0.501]])))
+    assert np.all(
+        np.isclose(
+            result[2],
+            np.array([[0.072, 0.47, 0.84, 0.898, 1.240],
                       [0.236, 0.189, 0.689, 0.74, 0.438],
                       [0.024, 0.398, 0.776, 0.719, 0.398]])))
 

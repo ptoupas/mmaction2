@@ -1,19 +1,21 @@
 # TPN
 
-## Introduction
+[Temporal Pyramid Network for Action Recognition](https://openaccess.thecvf.com/content_CVPR_2020/html/Yang_Temporal_Pyramid_Network_for_Action_Recognition_CVPR_2020_paper.html)
 
 <!-- [ALGORITHM] -->
 
-```BibTeX
-@inproceedings{yang2020tpn,
-  title={Temporal Pyramid Network for Action Recognition},
-  author={Yang, Ceyuan and Xu, Yinghao and Shi, Jianping and Dai, Bo and Zhou, Bolei},
-  booktitle={Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition (CVPR)},
-  year={2020},
-}
-```
+## Abstract
 
-## Model Zoo
+<!-- [ABSTRACT] -->
+
+Visual tempo characterizes the dynamics and the temporal scale of an action. Modeling such visual tempos of different actions facilitates their recognition. Previous works often capture the visual tempo through sampling raw videos at multiple rates and constructing an input-level frame pyramid, which usually requires a costly multi-branch network to handle. In this work we propose a generic Temporal Pyramid Network (TPN) at the feature-level, which can be flexibly integrated into 2D or 3D backbone networks in a plug-and-play manner. Two essential components of TPN, the source of features and the fusion of features, form a feature hierarchy for the backbone so that it can capture action instances at various tempos. TPN also shows consistent improvements over other challenging baselines on several action recognition datasets. Specifically, when equipped with TPN, the 3D ResNet-50 with dense sampling obtains a 2% gain on the validation set of Kinetics-400. A further analysis also reveals that TPN gains most of its improvements on action classes that have large variances in their visual tempos, validating the effectiveness of TPN.
+
+<!-- [IMAGE] -->
+<div align=center>
+<img src="https://user-images.githubusercontent.com/34324155/143018779-1d2a398f-dbd3-405a-87e5-e188b61fcc86.png" width="800"/>
+</div>
+
+## Results and Models
 
 ### Kinetics-400
 
@@ -26,7 +28,7 @@
 
 |config | resolution | gpus | backbone| pretrain | top1 acc| top5 acc | gpu_mem(M)  | ckpt | log| json|
 |:--|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-|[tpn_tsm_r50_1x1x8_150e_sthv1_rgb](/configs/recognition/tpn/tpn_tsm_r50_1x1x8_150e_sthv1_rgb.py)|height 100|8x6| ResNet50 | TSM | 50.80 | 79.05 | 8828 |[ckpt](https://download.openmmlab.com/mmaction/recognition/tpn/tpn_tsm_r50_1x1x8_150e_sthv1_rgb/tpn_tsm_r50_1x1x8_150e_sthv1_rgb_20210311-28de4cd5.pth) |[log](https://download.openmmlab.com/mmaction/recognition/tpn/tpn_tsm_r50_1x1x8_150e_sthv1_rgb/20210311_162636.log)|[json](https://download.openmmlab.com/mmaction/recognition/tpn/tpn_tsm_r50_1x1x8_150e_sthv1_rgb/20210311_162636.log.json)|
+|[tpn_tsm_r50_1x1x8_150e_sthv1_rgb](/configs/recognition/tpn/tpn_tsm_r50_1x1x8_150e_sthv1_rgb.py)|height 100|8x6| ResNet50 | TSM | 51.50 | 79.15 | 8828 |[ckpt](https://download.openmmlab.com/mmaction/recognition/tpn/tpn_tsm_r50_1x1x8_150e_sthv1_rgb/tpn_tsm_r50_1x1x8_150e_sthv1_rgb_20211202-c28ed83f.pth) |[log](https://download.openmmlab.com/mmaction/recognition/tpn/tpn_tsm_r50_1x1x8_150e_sthv1_rgb/tpn_tsm_r50_1x1x8_150e_sthv1_rgb.log)|[json](https://download.openmmlab.com/mmaction/recognition/tpn/tpn_tsm_r50_1x1x8_150e_sthv1_rgb/tpn_tsm_r50_1x1x8_150e_sthv1_rgb.json)|
 
 :::{note}
 
@@ -76,3 +78,14 @@ python tools/test.py configs/recognition/tpn/tpn_slowonly_r50_8x8x1_150e_kinetic
 ```
 
 For more details, you can refer to **Test a dataset** part in [getting_started](/docs/getting_started.md#test-a-dataset).
+
+## Citation
+
+```BibTeX
+@inproceedings{yang2020tpn,
+  title={Temporal Pyramid Network for Action Recognition},
+  author={Yang, Ceyuan and Xu, Yinghao and Shi, Jianping and Dai, Bo and Zhou, Bolei},
+  booktitle={Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition (CVPR)},
+  year={2020},
+}
+```

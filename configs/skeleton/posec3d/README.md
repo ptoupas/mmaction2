@@ -1,19 +1,19 @@
 # PoseC3D
 
-## Introduction
+[Revisiting Skeleton-based Action Recognition](https://arxiv.org/abs/2104.13586)
 
 <!-- [ALGORITHM] -->
 
-```BibTeX
-@misc{duan2021revisiting,
-      title={Revisiting Skeleton-based Action Recognition},
-      author={Haodong Duan and Yue Zhao and Kai Chen and Dian Shao and Dahua Lin and Bo Dai},
-      year={2021},
-      eprint={2104.13586},
-      archivePrefix={arXiv},
-      primaryClass={cs.CV}
-}
-```
+## Abstract
+
+<!-- [ABSTRACT] -->
+
+Human skeleton, as a compact representation of human action, has received increasing attention in recent years. Many skeleton-based action recognition methods adopt graph convolutional networks (GCN) to extract features on top of human skeletons. Despite the positive results shown in previous works, GCN-based methods are subject to limitations in robustness, interoperability, and scalability. In this work, we propose PoseC3D, a new approach to skeleton-based action recognition, which relies on a 3D heatmap stack instead of a graph sequence as the base representation of human skeletons. Compared to GCN-based methods, PoseC3D is more effective in learning spatiotemporal features, more robust against pose estimation noises, and generalizes better in cross-dataset settings. Also, PoseC3D can handle multiple-person scenarios without additional computation cost, and its features can be easily integrated with other modalities at early fusion stages, which provides a great design space to further boost the performance. On four challenging datasets, PoseC3D consistently obtains superior performance, when used alone on skeletons and in combination with the RGB modality.
+
+<!-- [IMAGE] -->
+<div align=center>
+<img src="https://user-images.githubusercontent.com/34324155/142995620-21b5536c-8cda-48cd-9cb9-50b70cab7a89.png" width="800"/>
+</div>
 
 <table>
 <thead>
@@ -49,7 +49,7 @@
 </thead>
 </table>
 
-## Model Zoo
+## Results and Models
 
 ### FineGYM
 
@@ -133,3 +133,16 @@ python tools/test.py configs/skeleton/posec3d/slowonly_r50_u48_240e_gym_keypoint
 ```
 
 For more details, you can refer to **Test a dataset** part in [getting_started](/docs/getting_started.md#test-a-dataset).
+
+## Citation
+
+```BibTeX
+@misc{duan2021revisiting,
+      title={Revisiting Skeleton-based Action Recognition},
+      author={Haodong Duan and Yue Zhao and Kai Chen and Dian Shao and Dahua Lin and Bo Dai},
+      year={2021},
+      eprint={2104.13586},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV}
+}
+```

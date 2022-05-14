@@ -57,6 +57,9 @@ For using custom datasets, please refer to [Tutorial 3: Adding New Dataset](tuto
 We provide testing scripts to evaluate a whole dataset (Kinetics-400, Something-Something V1&V2, (Multi-)Moments in Time, etc.),
 and provide some high-level apis for easier integration to other projects.
 
+MMAction2 also supports testing with CPU. However, it will be **very slow** and should only be used for debugging on a device without GPU.
+To test with CPU, one should first disable all GPUs (if exist) with `export CUDA_VISIBLE_DEVICES=-1`, and then call the testing scripts directly with `python tools/test.py {OTHER_ARGS}`.
+
 ### Test a dataset
 
 - [x] single GPU
@@ -149,7 +152,7 @@ model = init_recognizer(config_file, checkpoint_file, device=device)
 # test a single video and show the result:
 video = 'demo/demo.mp4'
 labels = 'tools/data/kinetics/label_map_k400.txt'
-results = inference_recognizer(model, video, labels)
+results = inference_recognizer(model, video)
 
 # show the results
 labels = open('tools/data/kinetics/label_map_k400.txt').readlines()
@@ -177,12 +180,12 @@ device = 'cuda:0' # or 'cpu'
 device = torch.device(device)
 
  # build the model from a config file and a checkpoint file
-model = init_recognizer(config_file, checkpoint_file, device=device, use_frames=True)
+model = init_recognizer(config_file, checkpoint_file, device=device)
 
 # test rawframe directory of a single video and show the result:
 video = 'SOME_DIR_PATH/'
 labels = 'tools/data/kinetics/label_map_k400.txt'
-results = inference_recognizer(model, video, labels, use_frames=True)
+results = inference_recognizer(model, video)
 
 # show the results
 labels = open('tools/data/kinetics/label_map_k400.txt').readlines()
@@ -215,7 +218,7 @@ model = init_recognizer(config_file, checkpoint_file, device=device)
 # test url of a single video and show the result:
 video = 'https://www.learningcontainer.com/wp-content/uploads/2020/05/sample-mp4-file.mp4'
 labels = 'tools/data/kinetics/label_map_k400.txt'
-results = inference_recognizer(model, video, labels)
+results = inference_recognizer(model, video)
 
 # show the results
 labels = open('tools/data/kinetics/label_map_k400.txt').readlines()
@@ -352,6 +355,9 @@ evaluation = dict(interval=5)  # This evaluate the model per 5 epoch.
 
 According to the [Linear Scaling Rule](https://arxiv.org/abs/1706.02677), you need to set the learning rate proportional to the batch size if you use different GPUs or videos per GPU, e.g., lr=0.01 for 4 GPUs x 2 video/gpu and lr=0.08 for 16 GPUs x 4 video/gpu.
 
+MMAction2 also supports training with CPU. However, it will be **very slow** and should only be used for debugging on a device without GPU.
+To train with CPU, one should first disable all GPUs (if exist) with `export CUDA_VISIBLE_DEVICES=-1`, and then call the training scripts directly with `python tools/train.py {OTHER_ARGS}`.
+
 ### Train with a single GPU
 
 ```shell
@@ -406,9 +412,21 @@ GPUS=16 ./tools/slurm_train.sh dev tsn_r50_k400 configs/recognition/tsn/tsn_r50_
 
 You can check [slurm_train.sh](/tools/slurm_train.sh) for full arguments and environment variables.
 
-If you have just multiple machines connected with ethernet, you can refer to
-pytorch [launch utility](https://pytorch.org/docs/stable/distributed.html#launch-utility).
-Usually it is slow if you do not have high speed networking like InfiniBand.
+If you have just multiple machines connected with ethernet, you can simply run the following commands:
+
+On the first machine:
+
+```shell
+NNODES=2 NODE_RANK=0 PORT=$MASTER_PORT MASTER_ADDR=$MASTER_ADDR sh tools/dist_train.sh $CONFIG $GPUS
+```
+
+On the second machine:
+
+```shell
+NNODES=2 NODE_RANK=1 PORT=$MASTER_PORT MASTER_ADDR=$MASTER_ADDR sh tools/dist_train.sh $CONFIG $GPUS
+```
+
+It can be extremely slow if you do not have high-speed networking like InfiniBand.
 
 ### Launch multiple jobs on a single machine
 

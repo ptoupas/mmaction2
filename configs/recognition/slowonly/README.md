@@ -1,20 +1,21 @@
 # SlowOnly
 
-## Introduction
+[Slowfast networks for video recognition](https://openaccess.thecvf.com/content_ICCV_2019/html/Feichtenhofer_SlowFast_Networks_for_Video_Recognition_ICCV_2019_paper.html)
 
 <!-- [ALGORITHM] -->
 
-```BibTeX
-@inproceedings{feichtenhofer2019slowfast,
-  title={Slowfast networks for video recognition},
-  author={Feichtenhofer, Christoph and Fan, Haoqi and Malik, Jitendra and He, Kaiming},
-  booktitle={Proceedings of the IEEE international conference on computer vision},
-  pages={6202--6211},
-  year={2019}
-}
-```
+## Abstract
 
-## Model Zoo
+<!-- [ABSTRACT] -->
+
+We present SlowFast networks for video recognition. Our model involves (i) a Slow pathway, operating at low frame rate, to capture spatial semantics, and (ii) a Fast pathway, operating at high frame rate, to capture motion at fine temporal resolution. The Fast pathway can be made very lightweight by reducing its channel capacity, yet can learn useful temporal information for video recognition. Our models achieve strong performance for both action classification and detection in video, and large improvements are pin-pointed as contributions by our SlowFast concept. We report state-of-the-art accuracy on major video recognition benchmarks, Kinetics, Charades and AVA.
+
+<!-- [IMAGE] -->
+<div align=center>
+<img src="https://user-images.githubusercontent.com/34324155/143044111-94676f64-7ba8-4081-9011-f8054bed7030.png" width="800"/>
+</div>
+
+## Results and Models
 
 ### Kinetics-400
 
@@ -95,7 +96,7 @@ In data benchmark, we compare two different data preprocessing methods: (1) Resi
 
 |config | gpus | backbone | pretrain | top1 acc| top5 acc | gpu_mem(M) | ckpt | log| json|
 |:--|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-|[slowonly_imagenet_pretrained_r50_8x4x1_64e_sthv1_rgb](/configs/recognition/slowonly/slowonly_imagenet_pretrained_r50_8x4x1_64e_sthv1_rgb.py)|8|ResNet50|ImageNet|46.63|77.19|7759|[ckpt](https://download.openmmlab.com/mmaction/recognition/slowonly/slowonly_imagenet_pretrained_r50_8x4x1_64e_sthv1_rgb/slowonly_r50_8x4x1_64e_sthv1_rgb-34901d23.pth)|[log](https://download.openmmlab.com/mmaction/recognition/slowonly/slowonly_imagenet_pretrained_r50_8x4x1_64e_sthv1_rgb/slowonly_r50_8x4x1_64e_sthv1_rgb.log)|[json](https://download.openmmlab.com/mmaction/recognition/slowonly/slowonly_imagenet_pretrained_r50_8x4x1_64e_sthv1_rgb/slowonly_r50_8x4x1_64e_sthv1_rgb.json)|
+|[slowonly_imagenet_pretrained_r50_8x4x1_64e_sthv1_rgb](/configs/recognition/slowonly/slowonly_imagenet_pretrained_r50_8x4x1_64e_sthv1_rgb.py)|8|ResNet50|ImageNet|47.76|77.49|7759|[ckpt](https://download.openmmlab.com/mmaction/recognition/slowonly/slowonly_imagenet_pretrained_r50_8x4x1_64e_sthv1_rgb/slowonly_imagenet_pretrained_r50_8x4x1_64e_sthv1_rgb_20211202-d034ff12.pth)|[log](https://download.openmmlab.com/mmaction/recognition/slowonly/slowonly_imagenet_pretrained_r50_8x4x1_64e_sthv1_rgb/slowonly_imagenet_pretrained_r50_8x4x1_64e_sthv1_rgb.log)|[json](https://download.openmmlab.com/mmaction/recognition/slowonly/slowonly_imagenet_pretrained_r50_8x4x1_64e_sthv1_rgb/slowonly_imagenet_pretrained_r50_8x4x1_64e_sthv1_rgb.json)|
 
 :::{note}
 
@@ -144,3 +145,15 @@ python tools/test.py configs/recognition/slowonly/slowonly_r50_4x16x1_256e_kinet
 ```
 
 For more details, you can refer to **Test a dataset** part in [getting_started](/docs/getting_started.md#test-a-dataset).
+
+## Citation
+
+```BibTeX
+@inproceedings{feichtenhofer2019slowfast,
+  title={Slowfast networks for video recognition},
+  author={Feichtenhofer, Christoph and Fan, Haoqi and Malik, Jitendra and He, Kaiming},
+  booktitle={Proceedings of the IEEE international conference on computer vision},
+  pages={6202--6211},
+  year={2019}
+}
+```

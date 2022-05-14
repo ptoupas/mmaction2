@@ -1,20 +1,21 @@
 # SSN
 
-## Introduction
+[Temporal Action Detection With Structured Segment Networks](https://openaccess.thecvf.com/content_iccv_2017/html/Zhao_Temporal_Action_Detection_ICCV_2017_paper.html)
 
 <!-- [ALGORITHM] -->
 
-```BibTeX
-@InProceedings{Zhao_2017_ICCV,
-author = {Zhao, Yue and Xiong, Yuanjun and Wang, Limin and Wu, Zhirong and Tang, Xiaoou and Lin, Dahua},
-title = {Temporal Action Detection With Structured Segment Networks},
-booktitle = {Proceedings of the IEEE International Conference on Computer Vision (ICCV)},
-month = {Oct},
-year = {2017}
-}
-```
+## Abstract
 
-## Model Zoo
+<!-- [ABSTRACT] -->
+
+Detecting actions in untrimmed videos is an important yet challenging task. In this paper, we present the structured segment network (SSN), a novel framework which models the temporal structure of each action instance via a structured temporal pyramid. On top of the pyramid, we further introduce a decomposed discriminative model comprising two classifiers, respectively for classifying actions and determining completeness. This allows the framework to effectively distinguish positive proposals from background or incomplete ones, thus leading to both accurate recognition and localization. These components are integrated into a unified network that can be efficiently trained in an end-to-end fashion. Additionally, a simple yet effective temporal action proposal scheme, dubbed temporal actionness grouping (TAG) is devised to generate high quality action proposals. On two challenging benchmarks, THUMOS14 and ActivityNet, our method remarkably outperforms previous state-of-the-art methods, demonstrating superior accuracy and strong adaptivity in handling actions with various temporal structures.
+
+<!-- [IMAGE] -->
+<div align=center>
+<img src="https://user-images.githubusercontent.com/34324155/143016899-017893d3-a907-4487-90a2-cb884088266c.png" width="800"/>
+</div>
+
+## Results and Models
 
 | config | gpus | backbone | pretrain | mAP@0.3 | mAP@0.4 | mAP@0.5 | reference mAP@0.3 | reference mAP@0.4 | reference mAP@0.5 | gpu_mem(M) | ckpt | log | json | reference ckpt | reference json
 |:-:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:-:|:-:|:-:|:-:|---|:--:|:--:|
@@ -63,3 +64,15 @@ python tools/test.py configs/localization/ssn/ssn_r50_450e_thumos14_rgb_test.py 
 ```
 
 For more details and optional arguments infos, you can refer to **Test a dataset** part in [getting_started](/docs/getting_started.md#test-a-dataset).
+
+## Citation
+
+```BibTeX
+@InProceedings{Zhao_2017_ICCV,
+author = {Zhao, Yue and Xiong, Yuanjun and Wang, Limin and Wu, Zhirong and Tang, Xiaoou and Lin, Dahua},
+title = {Temporal Action Detection With Structured Segment Networks},
+booktitle = {Proceedings of the IEEE International Conference on Computer Vision (ICCV)},
+month = {Oct},
+year = {2017}
+}
+```

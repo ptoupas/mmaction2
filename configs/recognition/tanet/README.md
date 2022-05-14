@@ -1,19 +1,21 @@
 # TANet
 
-## Introduction
+[TAM: Temporal Adaptive Module for Video Recognition](https://openaccess.thecvf.com/content/ICCV2021/html/Liu_TAM_Temporal_Adaptive_Module_for_Video_Recognition_ICCV_2021_paper.html)
 
 <!-- [ALGORITHM] -->
 
-```BibTeX
-@article{liu2020tam,
-  title={TAM: Temporal Adaptive Module for Video Recognition},
-  author={Liu, Zhaoyang and Wang, Limin and Wu, Wayne and Qian, Chen and Lu, Tong},
-  journal={arXiv preprint arXiv:2005.06803},
-  year={2020}
-}
-```
+## Abstract
 
-## Model Zoo
+<!-- [ABSTRACT] -->
+
+Video data is with complex temporal dynamics due to various factors such as camera motion, speed variation, and different activities. To effectively capture this diverse motion pattern, this paper presents a new temporal adaptive module ({\bf TAM}) to generate video-specific temporal kernels based on its own feature map. TAM proposes a unique two-level adaptive modeling scheme by decoupling the dynamic kernel into a location sensitive importance map and a location invariant aggregation weight. The importance map is learned in a local temporal window to capture short-term information, while the aggregation weight is generated from a global view with a focus on long-term structure. TAM is a modular block and could be integrated into 2D CNNs to yield a powerful video architecture (TANet) with a very small extra computational cost. The extensive experiments on Kinetics-400 and Something-Something datasets demonstrate that our TAM outperforms other temporal modeling methods consistently, and achieves the state-of-the-art performance under the similar complexity.
+
+<!-- [IMAGE] -->
+<div align=center>
+<img src="https://user-images.githubusercontent.com/34324155/143018253-c3e1ba5b-ac35-4c55-be28-0134b76888e8.png" width="800"/>
+</div>
+
+## Results and Models
 
 ### Kinetics-400
 
@@ -25,8 +27,8 @@
 
 |config | resolution | gpus | backbone| pretrain | top1 acc (efficient/accurate)| top5 acc (efficient/accurate)| gpu_mem(M)  | ckpt | log| json|
 |:--|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-|[tanet_r50_1x1x8_50e_sthv1_rgb](/configs/recognition/tanet/tanet_r50_1x1x8_50e_sthv1_rgb.py)|height 100|8|TANet|ImageNet|47.45/49.69|76.00/77.62|7127|[ckpt](https://download.openmmlab.com/mmaction/recognition/tanet/tanet_r50_1x1x8_50e_sthv1_rgb/tanet_r50_1x1x8_50e_sthv1_rgb_20210630-f4a48609.pth)|[log](https://download.openmmlab.com/mmaction/recognition/tanet/tanet_r50_1x1x8_50e_sthv1_rgb/20210606_205006.log)|[ckpt](https://download.openmmlab.com/mmaction/recognition/tanet/tanet_r50_1x1x8_50e_sthv1_rgb/20210606_205006.log.json)|
-|[tanet_r50_1x1x16_50e_sthv1_rgb](/configs/recognition/tanet/tanet_r50_1x1x16_50e_sthv1_rgb.py)|height 100|8|TANet|ImageNet|47.73/50.41|77.31/78.47|7127|[ckpt](https://download.openmmlab.com/mmaction/recognition/tanet/tanet_r50_1x1x16_50e_sthv1_rgb/tanet_r50_1x1x16_50e_sthv1_rgb_20210630-7c19303c.pth)|[log](https://download.openmmlab.com/mmaction/recognition/tanet/tanet_r50_1x1x16_50e_sthv1_rgb/20210607_155335.log)|[ckpt](https://download.openmmlab.com/mmaction/recognition/tanet/tanet_r50_1x1x16_50e_sthv1_rgb/20210607_155335.log.json)|
+|[tanet_r50_1x1x8_50e_sthv1_rgb](/configs/recognition/tanet/tanet_r50_1x1x8_50e_sthv1_rgb.py)|height 100|8|TANet|ImageNet|47.34/49.58|75.72/77.31|7127|[ckpt](https://download.openmmlab.com/mmaction/recognition/tanet/tanet_r50_1x1x8_50e_sthv1_rgb/tanet_r50_1x1x8_50e_sthv1_rgb_20210630-f4a48609.pth)|[log](https://download.openmmlab.com/mmaction/recognition/tanet/tanet_r50_1x1x8_50e_sthv1_rgb/20210606_205006.log)|[ckpt](https://download.openmmlab.com/mmaction/recognition/tanet/tanet_r50_1x1x8_50e_sthv1_rgb/20210606_205006.log.json)|
+|[tanet_r50_1x1x16_50e_sthv1_rgb](/configs/recognition/tanet/tanet_r50_1x1x16_50e_sthv1_rgb.py)|height 100|8|TANet|ImageNet|49.05/50.91|77.90/79.13|7127|[ckpt](https://download.openmmlab.com/mmaction/recognition/tanet/tanet_r50_1x1x16_50e_sthv1_rgb/tanet_r50_1x1x16_50e_sthv1_rgb_20211202-370c2128.pth)|[log](https://download.openmmlab.com/mmaction/recognition/tanet/tanet_r50_1x1x16_50e_sthv1_rgb/tanet_r50_1x1x16_50e_sthv1_rgb.log)|[ckpt](https://download.openmmlab.com/mmaction/recognition/tanet/tanet_r50_1x1x16_50e_sthv1_rgb/tanet_r50_1x1x16_50e_sthv1_rgb.json)|
 
 :::{note}
 
@@ -76,3 +78,14 @@ python tools/test.py configs/recognition/tanet/tanet_r50_dense_1x1x8_100e_kineti
 ```
 
 For more details, you can refer to **Test a dataset** part in [getting_started](/docs/getting_started.md#test-a-dataset).
+
+## Citation
+
+```BibTeX
+@article{liu2020tam,
+  title={TAM: Temporal Adaptive Module for Video Recognition},
+  author={Liu, Zhaoyang and Wang, Limin and Wu, Wayne and Qian, Chen and Lu, Tong},
+  journal={arXiv preprint arXiv:2005.06803},
+  year={2020}
+}
+```

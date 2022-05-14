@@ -4,21 +4,22 @@
 
 <!-- TOC -->
 
-- [数据集](#数据集)
-- [使用预训练模型进行推理](#使用预训练模型进行推理)
-  - [测试某个数据集](#测试某个数据集)
-  - [使用高级 API 对视频和帧文件夹进行测试](#使用高级-API-对视频和帧文件夹进行测试)
-- [如何建立模型](#如何建立模型)
-  - [使用基本组件建立模型](#使用基本组件建立模型)
-  - [构建新模型](#构建新模型)
-- [如何训练模型](#如何训练模型)
-  - [推理流水线](#推理流水线)
-  - [训练配置](#训练配置)
-  - [使用单个 GPU 进行训练](#使用单个-GPU-进行训练)
-  - [使用多个 GPU 进行训练](#使用多个-GPU-进行训练)
-  - [使用多台机器进行训练](#使用多台机器进行训练)
-  - [使用单台机器启动多个任务](#使用单台机器启动多个任务)
-- [详细教程](#详细教程)
+- [基础教程](#基础教程)
+  - [数据集](#数据集)
+  - [使用预训练模型进行推理](#使用预训练模型进行推理)
+    - [测试某个数据集](#测试某个数据集)
+    - [使用高级 API 对视频和帧文件夹进行测试](#使用高级-api-对视频和帧文件夹进行测试)
+  - [如何建立模型](#如何建立模型)
+    - [使用基本组件建立模型](#使用基本组件建立模型)
+    - [构建新模型](#构建新模型)
+  - [如何训练模型](#如何训练模型)
+    - [推理流水线](#推理流水线)
+    - [训练配置](#训练配置)
+    - [使用单个 GPU 进行训练](#使用单个-gpu-进行训练)
+    - [使用多个 GPU 进行训练](#使用多个-gpu-进行训练)
+    - [使用多台机器进行训练](#使用多台机器进行训练)
+    - [使用单台机器启动多个任务](#使用单台机器启动多个任务)
+  - [详细教程](#详细教程)
 
 <!-- TOC -->
 
@@ -54,6 +55,9 @@ mmaction2
 
 MMAction2 提供了一些脚本用于测试数据集（如 Kinetics-400，Something-Something V1&V2，(Multi-)Moments in Time，等），
 并提供了一些高级 API，以便更好地兼容其他项目。
+
+MMAction2 支持仅使用 CPU 进行测试。然而，这样做的速度**非常慢**，用户应仅使用其作为无 GPU 机器上的 debug 手段。
+如需使用 CPU 进行测试，用户需要首先使用命令 `export CUDA_VISIBLE_DEVICES=-1` 禁用机器上的 GPU （如有），然后使用命令 `python tools/test.py {OTHER_ARGS}` 直接调用测试脚本。
 
 ### 测试某个数据集
 
@@ -147,7 +151,7 @@ model = init_recognizer(config_file, checkpoint_file, device=device)
 # 测试单个视频并显示其结果
 video = 'demo/demo.mp4'
 labels = 'tools/data/kinetics/label_map_k400.txt'
-results = inference_recognizer(model, video, labels)
+results = inference_recognizer(model, video)
 
 # 显示结果
 labels = open('tools/data/kinetics/label_map_k400.txt').readlines()
@@ -175,12 +179,12 @@ device = 'cuda:0' # or 'cpu'
 device = torch.device(device)
 
  # 根据配置文件和检查点来建立模型
-model = init_recognizer(config_file, checkpoint_file, device=device, use_frames=True)
+model = init_recognizer(config_file, checkpoint_file, device=device)
 
 # 测试单个视频的帧文件夹并显示其结果
 video = 'SOME_DIR_PATH/'
 labels = 'tools/data/kinetics/label_map_k400.txt'
-results = inference_recognizer(model, video, labels, use_frames=True)
+results = inference_recognizer(model, video)
 
 # 显示结果
 labels = open('tools/data/kinetics/label_map_k400.txt').readlines()
@@ -213,7 +217,7 @@ model = init_recognizer(config_file, checkpoint_file, device=device)
 # 测试单个视频的 url 并显示其结果
 video = 'https://www.learningcontainer.com/wp-content/uploads/2020/05/sample-mp4-file.mp4'
 labels = 'tools/data/kinetics/label_map_k400.txt'
-results = inference_recognizer(model, video, labels)
+results = inference_recognizer(model, video)
 
 # 显示结果
 labels = open('tools/data/kinetics/label_map_k400.txt').readlines()
@@ -335,6 +339,9 @@ evaluation = dict(interval=5)  # 每 5 个周期进行一次模型评估
 
 根据 [Linear Scaling Rule](https://arxiv.org/abs/1706.02677)，当 GPU 数量或每个 GPU 上的视频批大小改变时，用户可根据批大小按比例地调整学习率，如，当 4 GPUs x 2 video/gpu 时，lr=0.01；当 16 GPUs x 4 video/gpu 时，lr=0.08。
 
+MMAction2 支持仅使用 CPU 进行训练。然而，这样做的速度**非常慢**，用户应仅使用其作为无 GPU 机器上的 debug 手段。
+如需使用 CPU 进行训练，用户需要首先使用命令 `export CUDA_VISIBLE_DEVICES=-1` 禁用机器上的 GPU （如有），然后使用命令 `python tools/train.py {OTHER_ARGS}` 直接调用训练脚本。
+
 ### 使用单个 GPU 进行训练
 
 ```shell
@@ -389,7 +396,21 @@ GPUS=16 ./tools/slurm_train.sh dev tsn_r50_k400 configs/recognition/tsn/tsn_r50_
 
 用户可以查看 [slurm_train.sh](/tools/slurm_train.sh) 文件来检查完整的参数和环境变量。
 
-如果用户的多台机器通过 Ethernet 连接，则可以参考 pytorch [launch utility](https://pytorch.org/docs/stable/distributed.html#launch-utility)。如果用户没有高速网络，如 InfiniBand，速度将会非常慢。
+如果您想使用由 ethernet 连接起来的多台机器， 您可以使用以下命令:
+
+在第一台机器上:
+
+```shell
+NNODES=2 NODE_RANK=0 PORT=$MASTER_PORT MASTER_ADDR=$MASTER_ADDR sh tools/dist_train.sh $CONFIG $GPUS
+```
+
+在第二台机器上:
+
+```shell
+NNODES=2 NODE_RANK=1 PORT=$MASTER_PORT MASTER_ADDR=$MASTER_ADDR sh tools/dist_train.sh $CONFIG $GPUS
+```
+
+但是，如果您不使用高速网路连接这几台机器的话，训练将会非常慢。
 
 ### 使用单台机器启动多个任务
 

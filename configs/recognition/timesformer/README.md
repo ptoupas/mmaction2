@@ -1,21 +1,21 @@
 # TimeSformer
 
-## Introduction
+[Is Space-Time Attention All You Need for Video Understanding?](https://arxiv.org/abs/2102.05095)
 
 <!-- [ALGORITHM] -->
 
-```BibTeX
-@misc{bertasius2021spacetime,
-    title   = {Is Space-Time Attention All You Need for Video Understanding?},
-    author  = {Gedas Bertasius and Heng Wang and Lorenzo Torresani},
-    year    = {2021},
-    eprint  = {2102.05095},
-    archivePrefix = {arXiv},
-    primaryClass = {cs.CV}
-}
-```
+## Abstract
 
-## Model Zoo
+<!-- [ABSTRACT] -->
+
+We present a convolution-free approach to video classification built exclusively on self-attention over space and time. Our method, named "TimeSformer," adapts the standard Transformer architecture to video by enabling spatiotemporal feature learning directly from a sequence of frame-level patches. Our experimental study compares different self-attention schemes and suggests that "divided attention," where temporal attention and spatial attention are separately applied within each block, leads to the best video classification accuracy among the design choices considered. Despite the radically new design, TimeSformer achieves state-of-the-art results on several action recognition benchmarks, including the best reported accuracy on Kinetics-400 and Kinetics-600. Finally, compared to 3D convolutional networks, our model is faster to train, it can achieve dramatically higher test efficiency (at a small drop in accuracy), and it can also be applied to much longer video clips (over one minute long).
+
+<!-- [IMAGE] -->
+<div align=center>
+<img src="https://user-images.githubusercontent.com/34324155/143018542-7f782ec9-dca2-495e-9043-c13ad941a25c.png" width="800"/>
+</div>
+
+## Results and Models
 
 ### Kinetics-400
 
@@ -72,3 +72,16 @@ python tools/test.py configs/recognition/timesformer/timesformer_divST_8x32x1_15
 ```
 
 For more details, you can refer to **Test a dataset** part in [getting_started](/docs/getting_started.md#test-a-dataset).
+
+## Citation
+
+```BibTeX
+@misc{bertasius2021spacetime,
+    title   = {Is Space-Time Attention All You Need for Video Understanding?},
+    author  = {Gedas Bertasius and Heng Wang and Lorenzo Torresani},
+    year    = {2021},
+    eprint  = {2102.05095},
+    archivePrefix = {arXiv},
+    primaryClass = {cs.CV}
+}
+```

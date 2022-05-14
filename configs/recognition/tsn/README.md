@@ -1,21 +1,21 @@
 # TSN
 
-## Introduction
+[Temporal segment networks: Towards good practices for deep action recognition](https://link.springer.com/chapter/10.1007/978-3-319-46484-8_2)
 
 <!-- [ALGORITHM] -->
 
-```BibTeX
-@inproceedings{wang2016temporal,
-  title={Temporal segment networks: Towards good practices for deep action recognition},
-  author={Wang, Limin and Xiong, Yuanjun and Wang, Zhe and Qiao, Yu and Lin, Dahua and Tang, Xiaoou and Van Gool, Luc},
-  booktitle={European conference on computer vision},
-  pages={20--36},
-  year={2016},
-  organization={Springer}
-}
-```
+## Abstract
 
-## Model Zoo
+<!-- [ABSTRACT] -->
+
+Deep convolutional networks have achieved great success for visual recognition in still images. However, for action recognition in videos, the advantage over traditional methods is not so evident. This paper aims to discover the principles to design effective ConvNet architectures for action recognition in videos and learn these models given limited training samples. Our first contribution is temporal segment network (TSN), a novel framework for video-based action recognition. which is based on the idea of long-range temporal structure modeling. It combines a sparse temporal sampling strategy and video-level supervision to enable efficient and effective learning using the whole action video. The other contribution is our study on a series of good practices in learning ConvNets on video data with the help of temporal segment network. Our approach obtains the state-the-of-art performance on the datasets of HMDB51 ( 69.4%) and UCF101 (94.2%). We also visualize the learned ConvNet models, which qualitatively demonstrates the effectiveness of temporal segment network and the proposed good practices.
+
+<!-- [IMAGE] -->
+<div align=center>
+<img src="https://user-images.githubusercontent.com/34324155/143019237-8823045b-dfa3-45cc-a992-ee83ab9d8459.png" width="800"/>
+</div>
+
+## Results and Models
 
 ### UCF-101
 
@@ -232,3 +232,16 @@ python tools/test.py configs/recognition/tsn/tsn_r50_1x1x3_100e_kinetics400_rgb.
 ```
 
 For more details, you can refer to **Test a dataset** part in [getting_started](/docs/getting_started.md#test-a-dataset).
+
+## Citation
+
+```BibTeX
+@inproceedings{wang2016temporal,
+  title={Temporal segment networks: Towards good practices for deep action recognition},
+  author={Wang, Limin and Xiong, Yuanjun and Wang, Zhe and Qiao, Yu and Lin, Dahua and Tang, Xiaoou and Van Gool, Luc},
+  booktitle={European conference on computer vision},
+  pages={20--36},
+  year={2016},
+  organization={Springer}
+}
+```

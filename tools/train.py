@@ -8,15 +8,17 @@ import warnings
 
 import mmcv
 import torch
+import torch.distributed as dist
 from mmcv import Config, DictAction
 from mmcv.runner import get_dist_info, init_dist, set_random_seed
 from mmcv.utils import get_git_hash
 
 from mmaction import __version__
-from mmaction.apis import train_model
+from mmaction.apis import init_random_seed, train_model
 from mmaction.datasets import build_dataset
 from mmaction.models import build_model
-from mmaction.utils import collect_env, get_root_logger, register_module_hooks
+from mmaction.utils import (collect_env, get_root_logger,
+                            register_module_hooks, setup_multi_processes)
 
 
 def parse_args():
@@ -52,6 +54,10 @@ def parse_args():
         '(only applicable to non-distributed training)')
     parser.add_argument('--seed', type=int, default=None, help='random seed')
     parser.add_argument(
+        '--diff-seed',
+        action='store_true',
+        help='Whether or not set different seeds for different ranks')
+    parser.add_argument(
         '--deterministic',
         action='store_true',
         help='whether to set deterministic options for CUDNN backend.')
@@ -83,6 +89,9 @@ def main():
 
     cfg.merge_from_dict(args.cfg_options)
 
+    # set multi-process settings
+    setup_multi_processes(cfg)
+
     # set cudnn_benchmark
     if cfg.get('cudnn_benchmark', False):
         torch.backends.cudnn.benchmark = True
@@ -98,10 +107,21 @@ def main():
                                 osp.splitext(osp.basename(args.config))[0])
     if args.resume_from is not None:
         cfg.resume_from = args.resume_from
-    if args.gpu_ids is not None:
-        cfg.gpu_ids = args.gpu_ids
-    else:
-        cfg.gpu_ids = range(1) if args.gpus is None else range(args.gpus)
+
+    if args.gpu_ids is not None or args.gpus is not None:
+        warnings.warn(
+            'The Args `gpu_ids` and `gpus` are only used in non-distributed '
+            'mode and we highly encourage you to use distributed mode, i.e., '
+            'launch training with dist_train.sh. The two args will be '
+            'deperacted.')
+        if args.gpu_ids is not None:
+            warnings.warn(
+                'Non-distributed training can only use 1 gpu now. We will '
+                'use the 1st one in gpu_ids. ')
+            cfg.gpu_ids = [args.gpu_ids[0]]
+        elif args.gpus is not None:
+            warnings.warn('Non-distributed training can only use 1 gpu now. ')
+            cfg.gpu_ids = range(1)
 
     # init distributed env first, since logger depends on the dist info.
     if args.launcher == 'none':
@@ -143,12 +163,14 @@ def main():
     logger.info(f'Config: {cfg.pretty_text}')
 
     # set random seeds
-    if args.seed is not None:
-        logger.info(f'Set random seed to {args.seed}, '
-                    f'deterministic: {args.deterministic}')
-        set_random_seed(args.seed, deterministic=args.deterministic)
-    cfg.seed = args.seed
-    meta['seed'] = args.seed
+    seed = init_random_seed(args.seed, distributed=distributed)
+    seed = seed + dist.get_rank() if args.diff_seed else seed
+    logger.info(f'Set random seed to {seed}, '
+                f'deterministic: {args.deterministic}')
+    set_random_seed(seed, deterministic=args.deterministic)
+
+    cfg.seed = seed
+    meta['seed'] = seed
     meta['config_name'] = osp.basename(args.config)
     meta['work_dir'] = osp.basename(cfg.work_dir.rstrip('/\\'))
 

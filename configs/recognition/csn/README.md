@@ -1,33 +1,21 @@
 # CSN
 
-## Introduction
+[Video Classification With Channel-Separated Convolutional Networks](https://openaccess.thecvf.com/content_ICCV_2019/html/Tran_Video_Classification_With_Channel-Separated_Convolutional_Networks_ICCV_2019_paper.html)
 
 <!-- [ALGORITHM] -->
 
-```BibTeX
-@inproceedings{inproceedings,
-author = {Wang, Heng and Feiszli, Matt and Torresani, Lorenzo},
-year = {2019},
-month = {10},
-pages = {5551-5560},
-title = {Video Classification With Channel-Separated Convolutional Networks},
-doi = {10.1109/ICCV.2019.00565}
-}
-```
+## Abstract
 
-<!-- [OTHERS] -->
+<!-- [ABSTRACT] -->
 
-```BibTeX
-@inproceedings{ghadiyaram2019large,
-  title={Large-scale weakly-supervised pre-training for video action recognition},
-  author={Ghadiyaram, Deepti and Tran, Du and Mahajan, Dhruv},
-  booktitle={Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition},
-  pages={12046--12055},
-  year={2019}
-}
-```
+Group convolution has been shown to offer great computational savings in various 2D convolutional architectures for image classification. It is natural to ask: 1) if group convolution can help to alleviate the high computational cost of video classification networks; 2) what factors matter the most in 3D group convolutional networks; and 3) what are good computation/accuracy trade-offs with 3D group convolutional networks. This paper studies the effects of different design choices in 3D group convolutional networks for video classification. We empirically demonstrate that the amount of channel interactions plays an important role in the accuracy of 3D group convolutional networks. Our experiments suggest two main findings. First, it is a good practice to factorize 3D convolutions by separating channel interactions and spatiotemporal interactions as this leads to improved accuracy and lower computational cost. Second, 3D channel-separated convolutions provide a form of regularization, yielding lower training accuracy but higher test accuracy compared to 3D convolutions. These two empirical findings lead us to design an architecture -- Channel-Separated Convolutional Network (CSN) -- which is simple, efficient, yet accurate. On Sports1M, Kinetics, and Something-Something, our CSNs are comparable with or better than the state-of-the-art while being 2-3 times more efficient.
 
-## Model Zoo
+<!-- [IMAGE] -->
+<div align=center>
+<img src="https://user-images.githubusercontent.com/34324155/143017317-1bd7e557-7d99-4964-8b89-ab5280945d54.png" width="800"/>
+</div>
+
+## Results and Models
 
 ### Kinetics-400
 
@@ -92,3 +80,28 @@ python tools/test.py configs/recognition/csn/ircsn_ig65m_pretrained_r152_32x2x1_
 ```
 
 For more details, you can refer to **Test a dataset** part in [getting_started](/docs/getting_started.md#test-a-dataset).
+
+## Citation
+
+```BibTeX
+@inproceedings{inproceedings,
+author = {Wang, Heng and Feiszli, Matt and Torresani, Lorenzo},
+year = {2019},
+month = {10},
+pages = {5551-5560},
+title = {Video Classification With Channel-Separated Convolutional Networks},
+doi = {10.1109/ICCV.2019.00565}
+}
+```
+
+<!-- [OTHERS] -->
+
+```BibTeX
+@inproceedings{ghadiyaram2019large,
+  title={Large-scale weakly-supervised pre-training for video action recognition},
+  author={Ghadiyaram, Deepti and Tran, Du and Mahajan, Dhruv},
+  booktitle={Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition},
+  pages={12046--12055},
+  year={2019}
+}
+```

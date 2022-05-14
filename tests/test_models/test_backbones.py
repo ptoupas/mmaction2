@@ -326,9 +326,10 @@ def test_resnet_tsm_backbone():
 
 def test_mobilenetv2_tsm_backbone():
     """Test mobilenetv2_tsm backbone."""
-    from mmaction.models.backbones.resnet_tsm import TemporalShift
-    from mmaction.models.backbones.mobilenet_v2 import InvertedResidual
     from mmcv.cnn import ConvModule
+
+    from mmaction.models.backbones.mobilenet_v2 import InvertedResidual
+    from mmaction.models.backbones.resnet_tsm import TemporalShift
 
     input_shape = (8, 3, 64, 64)
     imgs = generate_backbone_demo_inputs(input_shape)
@@ -691,18 +692,18 @@ def test_timesformer_backbone():
 
 def test_c3d_backbone():
     """Test c3d backbone."""
-    input_shape = (1, 3, 16, 112, 112)
+    input_shape = (1, 3, 16, 24, 24)
     imgs = generate_backbone_demo_inputs(input_shape)
 
     # c3d inference test
-    c3d = C3D()
+    c3d = C3D(out_dim=512)
     c3d.init_weights()
     c3d.train()
     feat = c3d(imgs)
     assert feat.shape == torch.Size([1, 4096])
 
     # c3d with bn inference test
-    c3d_bn = C3D(norm_cfg=dict(type='BN3d'))
+    c3d_bn = C3D(out_dim=512, norm_cfg=dict(type='BN3d'))
     c3d_bn.init_weights()
     c3d_bn.train()
     feat = c3d_bn(imgs)
@@ -786,14 +787,14 @@ def test_stgcn_backbone():
     feat = stgcn(skeletons)
     assert feat.shape == torch.Size([2, 256, 75, 17])
 
-    # test openpose layout, spatial strategy
+    # test openpose-18 layout, spatial strategy
     input_shape = (1, 3, 300, 18, 2)
     skeletons = generate_backbone_demo_inputs(input_shape)
 
     stgcn = STGCN(
         in_channels=3,
         edge_importance_weighting=True,
-        graph_cfg=dict(layout='openpose', strategy='spatial'))
+        graph_cfg=dict(layout='openpose-18', strategy='spatial'))
     stgcn.init_weights()
     stgcn.train()
     feat = stgcn(skeletons)
@@ -838,14 +839,14 @@ def test_stgcn_backbone():
     feat = stgcn(skeletons)
     assert feat.shape == torch.Size([2, 256, 75, 17])
 
-    # test openpose layout, uniform strategy
+    # test openpose-18 layout, uniform strategy
     input_shape = (1, 3, 300, 18, 2)
     skeletons = generate_backbone_demo_inputs(input_shape)
 
     stgcn = STGCN(
         in_channels=3,
         edge_importance_weighting=True,
-        graph_cfg=dict(layout='openpose', strategy='uniform'))
+        graph_cfg=dict(layout='openpose-18', strategy='uniform'))
     stgcn.init_weights()
     stgcn.train()
     feat = stgcn(skeletons)
@@ -890,14 +891,14 @@ def test_stgcn_backbone():
     feat = stgcn(skeletons)
     assert feat.shape == torch.Size([2, 256, 75, 17])
 
-    # test openpose layout, distance strategy
+    # test openpose-18 layout, distance strategy
     input_shape = (1, 3, 300, 18, 2)
     skeletons = generate_backbone_demo_inputs(input_shape)
 
     stgcn = STGCN(
         in_channels=3,
         edge_importance_weighting=True,
-        graph_cfg=dict(layout='openpose', strategy='distance'))
+        graph_cfg=dict(layout='openpose-18', strategy='distance'))
     stgcn.init_weights()
     stgcn.train()
     feat = stgcn(skeletons)

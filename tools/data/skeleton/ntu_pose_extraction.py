@@ -6,7 +6,6 @@ import os.path as osp
 import random as rd
 import shutil
 import string
-import warnings
 from collections import defaultdict
 
 import cv2
@@ -15,11 +14,17 @@ import numpy as np
 
 try:
     from mmdet.apis import inference_detector, init_detector
+except (ImportError, ModuleNotFoundError):
+    raise ImportError('Failed to import `inference_detector` and '
+                      '`init_detector` form `mmdet.apis`. These apis are '
+                      'required in this script! ')
+
+try:
     from mmpose.apis import inference_top_down_pose_model, init_pose_model
-except ImportError:
-    warnings.warn(
-        'Please install MMDet and MMPose for NTURGB+D pose extraction.'
-    )  # noqa: E501
+except (ImportError, ModuleNotFoundError):
+    raise ImportError('Failed to import `inference_top_down_pose_model` and '
+                      '`init_pose_model` form `mmpose.apis`. These apis are '
+                      'required in this script! ')
 
 mmdet_root = ''
 mmpose_root = ''
@@ -288,7 +293,8 @@ def pose_inference(args, frame_paths, det_results):
     print('Performing Human Pose Estimation for each frame')
     prog_bar = mmcv.ProgressBar(len(frame_paths))
 
-    num_frame, num_person = det_results.shape[:2]
+    num_frame = len(det_results)
+    num_person = max([len(x) for x in det_results])
     kp = np.zeros((num_person, num_frame, 17, 3), dtype=np.float32)
 
     for i, (f, d) in enumerate(zip(frame_paths, det_results)):
@@ -301,10 +307,11 @@ def pose_inference(args, frame_paths, det_results):
     return kp
 
 
-def ntu_pose_extraction(vid):
+def ntu_pose_extraction(vid, skip_postproc=False):
     frame_paths = extract_frame(vid)
     det_results = detection_inference(args, frame_paths)
-    det_results = ntu_det_postproc(vid, det_results)
+    if not skip_postproc:
+        det_results = ntu_det_postproc(vid, det_results)
     pose_results = pose_inference(args, frame_paths, det_results)
     anno = dict()
     anno['keypoint'] = pose_results[..., :2]
@@ -325,6 +332,7 @@ def parse_args():
     parser.add_argument('video', type=str, help='source video')
     parser.add_argument('output', type=str, help='output pickle name')
     parser.add_argument('--device', type=str, default='cuda:0')
+    parser.add_argument('--skip-postproc', action='store_true')
     args = parser.parse_args()
     return args
 
@@ -334,5 +342,6 @@ if __name__ == '__main__':
     args.device = global_args.device
     args.video = global_args.video
     args.output = global_args.output
-    anno = ntu_pose_extraction(args.video)
+    args.skip_postproc = global_args.skip_postproc
+    anno = ntu_pose_extraction(args.video, args.skip_postproc)
     mmcv.dump(anno, args.output)

@@ -1,32 +1,21 @@
 # BMN
 
-## Introduction
+[Bmn: Boundary-matching network for temporal action proposal generation](https://openaccess.thecvf.com/content_ICCV_2019/html/Lin_BMN_Boundary-Matching_Network_for_Temporal_Action_Proposal_Generation_ICCV_2019_paper.html)
 
 <!-- [ALGORITHM] -->
 
-```BibTeX
-@inproceedings{lin2019bmn,
-  title={Bmn: Boundary-matching network for temporal action proposal generation},
-  author={Lin, Tianwei and Liu, Xiao and Li, Xin and Ding, Errui and Wen, Shilei},
-  booktitle={Proceedings of the IEEE International Conference on Computer Vision},
-  pages={3889--3898},
-  year={2019}
-}
-```
+## Abstract
 
-<!-- [DATASET] -->
+<!-- [ABSTRACT] -->
 
-```BibTeX
-@article{zhao2017cuhk,
-  title={Cuhk \& ethz \& siat submission to activitynet challenge 2017},
-  author={Zhao, Y and Zhang, B and Wu, Z and Yang, S and Zhou, L and Yan, S and Wang, L and Xiong, Y and Lin, D and Qiao, Y and others},
-  journal={arXiv preprint arXiv:1710.08011},
-  volume={8},
-  year={2017}
-}
-```
+Temporal action proposal generation is an challenging and promising task which aims to locate temporal regions in real-world videos where action or event may occur. Current bottom-up proposal generation methods can generate proposals with precise boundary, but cannot efficiently generate adequately reliable confidence scores for retrieving proposals. To address these difficulties, we introduce the Boundary-Matching (BM) mechanism to evaluate confidence scores of densely distributed proposals, which denote a proposal as a matching pair of starting and ending boundaries and combine all densely distributed BM pairs into the BM confidence map. Based on BM mechanism, we propose an effective, efficient and end-to-end proposal generation method, named Boundary-Matching Network (BMN), which generates proposals with precise temporal boundaries as well as reliable confidence scores simultaneously. The two-branches of BMN are jointly trained in an unified framework. We conduct experiments on two challenging datasets: THUMOS-14 and ActivityNet-1.3, where BMN shows significant performance improvement with remarkable efficiency and generalizability. Further, combining with existing action classifier, BMN can achieve state-of-the-art temporal action detection performance.
 
-## Model Zoo
+<!-- [IMAGE] -->
+<div align=center>
+<img src="https://user-images.githubusercontent.com/34324155/143016479-2ca7e8b6-a17b-4a4c-b4c9-ae731935cd91.png" width="800"/>
+</div>
+
+## Results and Models
 
 ### ActivityNet feature
 
@@ -99,3 +88,27 @@ python tools/analysis/report_map.py --proposal path/to/proposal_file
 :::
 
 For more details and optional arguments infos, you can refer to **Test a dataset** part in [getting_started](/docs/getting_started.md#test-a-dataset) .
+
+## Citation
+
+```BibTeX
+@inproceedings{lin2019bmn,
+  title={Bmn: Boundary-matching network for temporal action proposal generation},
+  author={Lin, Tianwei and Liu, Xiao and Li, Xin and Ding, Errui and Wen, Shilei},
+  booktitle={Proceedings of the IEEE International Conference on Computer Vision},
+  pages={3889--3898},
+  year={2019}
+}
+```
+
+<!-- [DATASET] -->
+
+```BibTeX
+@article{zhao2017cuhk,
+  title={Cuhk \& ethz \& siat submission to activitynet challenge 2017},
+  author={Zhao, Y and Zhang, B and Wu, Z and Yang, S and Zhou, L and Yan, S and Wang, L and Xiong, Y and Lin, D and Qiao, Y and others},
+  journal={arXiv preprint arXiv:1710.08011},
+  volume={8},
+  year={2017}
+}
+```

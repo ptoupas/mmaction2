@@ -1,21 +1,21 @@
 # X3D
 
-## Introduction
+[X3D: Expanding Architectures for Efficient Video Recognition](https://openaccess.thecvf.com/content_CVPR_2020/html/Feichtenhofer_X3D_Expanding_Architectures_for_Efficient_Video_Recognition_CVPR_2020_paper.html)
 
 <!-- [ALGORITHM] -->
 
-```BibTeX
-@misc{feichtenhofer2020x3d,
-      title={X3D: Expanding Architectures for Efficient Video Recognition},
-      author={Christoph Feichtenhofer},
-      year={2020},
-      eprint={2004.04730},
-      archivePrefix={arXiv},
-      primaryClass={cs.CV}
-}
-```
+## Abstract
 
-## Model Zoo
+<!-- [ABSTRACT] -->
+
+This paper presents X3D, a family of efficient video networks that progressively expand a tiny 2D image classification architecture along multiple network axes, in space, time, width and depth. Inspired by feature selection methods in machine learning, a simple stepwise network expansion approach is employed that expands a single axis in each step, such that good accuracy to complexity trade-off is achieved. To expand X3D to a specific target complexity, we perform progressive forward expansion followed by backward contraction. X3D achieves state-of-the-art performance while requiring 4.8x and 5.5x fewer multiply-adds and parameters for similar accuracy as previous work. Our most surprising finding is that networks with high spatiotemporal resolution can perform well, while being extremely light in terms of network width and parameters. We report competitive accuracy at unprecedented efficiency on video classification and detection benchmarks.
+
+<!-- [IMAGE] -->
+<div align=center>
+<img src="https://user-images.githubusercontent.com/34324155/143019391-6711febb-9e5d-4bec-85b9-65f5179e93a2.png" width="800"/>
+</div>
+
+## Results and Models
 
 ### Kinetics-400
 
@@ -52,3 +52,16 @@ python tools/test.py configs/recognition/x3d/x3d_s_13x6x1_facebook_kinetics400_r
 ```
 
 For more details, you can refer to **Test a dataset** part in [getting_started](/docs/getting_started.md#test-a-dataset).
+
+## Citation
+
+```BibTeX
+@misc{feichtenhofer2020x3d,
+      title={X3D: Expanding Architectures for Efficient Video Recognition},
+      author={Christoph Feichtenhofer},
+      year={2020},
+      eprint={2004.04730},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV}
+}
+```

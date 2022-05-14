@@ -96,7 +96,7 @@ For skeleton data visualization, you need also to prepare the RGB videos. Please
 </thead>
 </table>
 
-## Convert the NTU RGB+D raw skeleton data to our format
+## Convert the NTU RGB+D raw skeleton data to our format (only applicable to GCN backbones)
 
 Here we also provide the script for converting the NTU RGB+D raw skeleton data to our format.
 First, download the raw skeleton data of NTU-RGBD 60 and NTU-RGBD 120 from https://github.com/shahroudy/NTURGB-D.
@@ -112,6 +112,12 @@ For NTU-RGBD 120, preprocess data and convert the data format with
 ```python
 python gen_ntu_rgbd_raw.py --data-path your_raw_nturgbd120_skeleton_path --ignored-sample-path NTU_RGBD120_samples_with_missing_skeletons.txt --out-folder your_nturgbd120_output_path --task ntu120
 ```
+
+## Convert annotations from third-party projects
+
+We provide scripts to convert skeleton annotations from third-party projects to MMAction2 formats:
+
+- BABEL: `babel2mma2.py`
 
 **TODO**:
 

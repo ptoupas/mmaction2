@@ -4,6 +4,7 @@ import copy as cp
 import os
 import os.path as osp
 import shutil
+import warnings
 
 import cv2
 import mmcv
@@ -15,35 +16,22 @@ from mmcv.runner import load_checkpoint
 from mmaction.apis import inference_recognizer
 from mmaction.datasets.pipelines import Compose
 from mmaction.models import build_detector, build_model, build_recognizer
-from mmaction.utils import import_module_error_func
 
 try:
     from mmdet.apis import inference_detector, init_detector
-    from mmpose.apis import (init_pose_model, inference_top_down_pose_model,
-                             vis_pose_result)
-
 except (ImportError, ModuleNotFoundError):
+    warnings.warn('Failed to import `inference_detector` and `init_detector` '
+                  'form `mmdet.apis`. These apis are required in '
+                  'skeleton-based applications! ')
 
-    @import_module_error_func('mmdet')
-    def inference_detector(*args, **kwargs):
-        pass
-
-    @import_module_error_func('mmdet')
-    def init_detector(*args, **kwargs):
-        pass
-
-    @import_module_error_func('mmpose')
-    def init_pose_model(*args, **kwargs):
-        pass
-
-    @import_module_error_func('mmpose')
-    def inference_top_down_pose_model(*args, **kwargs):
-        pass
-
-    @import_module_error_func('mmpose')
-    def vis_pose_result(*args, **kwargs):
-        pass
-
+try:
+    from mmpose.apis import (inference_top_down_pose_model, init_pose_model,
+                             vis_pose_result)
+except (ImportError, ModuleNotFoundError):
+    warnings.warn('Failed to import `inference_top_down_pose_model`, '
+                  '`init_pose_model`, and `vis_pose_result` form '
+                  '`mmpose.apis`. These apis are required in skeleton-based '
+                  'applications! ')
 
 try:
     import moviepy.editor as mpy
@@ -494,8 +482,8 @@ def rgb_based_action_recognition(args):
     rgb_model.cfg = rgb_config
     rgb_model.to(args.device)
     rgb_model.eval()
-    action_results = inference_recognizer(rgb_model, args.video,
-                                          args.label_map)
+    action_results = inference_recognizer(
+        rgb_model, args.video, label_path=args.label_map)
     rgb_action_result = action_results[0][0]
     return rgb_action_result
 
