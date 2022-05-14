@@ -1,19 +1,32 @@
 _base_ = ['../../_base_/models/x3d.py']
-
+model = dict(
+    type='Recognizer3D',
+    backbone=dict(type='X3D', frozen_stages = -1, gamma_w=1, gamma_b=2.25, gamma_d=2.2),
+    cls_head=dict(
+        type='X3DHead',
+        in_channels=432,
+        num_classes=7,
+        multi_class=False,
+        spatial_type='avg',
+        dropout_ratio=0.7,
+        fc1_bias=False),
+    # model training and testing settings
+    train_cfg=None,
+    test_cfg=dict(average_clips='prob')
+)
 # dataset settings
 dataset_type = 'VideoDataset'
 
-data_root = '/second_ext4/ptoupas/data/certhbot_har_fused_semi/videos'
-data_root_val = '/second_ext4/ptoupas/data/certhbot_har_fused_semi/videos'
-ann_file_train = '/second_ext4/ptoupas/data/certhbot_har_fused_semi/certhbot_har_train_split1_videos.txt'
-ann_file_val = '/second_ext4/ptoupas/data/certhbot_har_fused_semi/certhbot_har_val_split1_videos.txt'
-ann_file_test = '/second_ext4/ptoupas/data/certhbot_har_fused_semi/certhbot_har_val_split1_videos.txt'
+data_root = '/data/datasets/certhbot_dataset/videos'
+data_root_val = '/data/datasets/certhbot_dataset/videos'
+bbox_folder_path = '/data/datasets/certhbot_dataset/annotations'
+split = 1
 
-# dataset_type = 'RawframeDataset'
-# data_root = 'data/hmdb51/rawframes'
-# data_root_val = 'data/hmdb51/rawframes'
-# ann_file_train = 'data/hmdb51/hmdb51_train_split_1_rawframes.txt'
-# ann_file_val = 'data/hmdb51/hmdb51_val_split_1_rawframes.txt'
+ann_file_train = f'/data/datasets/certhbot_dataset/certhbot_har_train_split{split}_videos.txt'
+ann_file_val = f'/data/datasets/certhbot_dataset/certhbot_har_val_split{split}_videos.txt'
+
+
+ann_file_test = f'/data/datasets/certhbot_dataset/certhbot_har_val_split{split}_videos.txt'
 
 img_norm_cfg = dict(
     mean=[114.75, 114.75, 114.75], std=[57.38, 57.38, 57.38], to_bgr=False)
@@ -65,13 +78,15 @@ test_pipeline = [
         type='SampleFrames',
         clip_len=16,   
         frame_interval=5,
-        num_clips=1,
+        num_clips=5,
         test_mode=True),
     # dict(type='RawFrameDecode'),
     # dict(type='DecordDecode'),
     dict(type='PyAVDecode'),
-    dict(type='Resize', scale=(-1, 320)),
-    dict(type='CenterCrop', crop_size=256),
+    dict(type='ApplyBbox'),
+    dict(type='Resize', scale=(-1, 256)),
+    # dict(type='CenterCrop', crop_size=256),
+    dict(type='ThreeCrop', crop_size=256),
     dict(type='Normalize', **img_norm_cfg),
     dict(type='FormatShape', input_format='NCTHW'),
     dict(type='Collect', keys=['imgs', 'label'], meta_keys=[]),
@@ -79,7 +94,7 @@ test_pipeline = [
 ]
 
 data = dict(
-    videos_per_gpu=32,
+    videos_per_gpu=1,
     workers_per_gpu=8,
     train=dict(
         type=dataset_type,
@@ -101,7 +116,8 @@ data = dict(
         data_prefix=data_root_val,
         pipeline=test_pipeline,
         multi_class=False,
-        num_classes=7))
+        num_classes=7,
+        bbox_ann_path=bbox_folder_path,))
 # optimizer
 optimizer = dict(
     type='SGD', lr=0.011, momentum=0.9,
