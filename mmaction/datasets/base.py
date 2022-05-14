@@ -293,6 +293,11 @@ class BaseDataset(Dataset, metaclass=ABCMeta):
     def prepare_train_frames(self, idx):
         """Prepare the frames for training given the index."""
         results = copy.deepcopy(self.video_infos[idx])
+        if self.bbox_ann_path is not None:
+            label_class = results['filename'].split('/')[-2]
+            video_name = results['filename'].split('/')[-1].split('.')[0]
+            video_bbox_ann = os.path.join(self.bbox_ann_path, label_class, video_name + '.txt')
+            results['bbox_ann'] = video_bbox_ann
         results['modality'] = self.modality
         results['start_index'] = self.start_index
 
