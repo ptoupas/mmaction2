@@ -1937,7 +1937,10 @@ class ApplyBbox:
 
         cropped_imgs = []
         for img, idx in zip(results['imgs'], results['frame_inds']):
-            bbox = frame_bboxes[idx]
+            if idx == len(frame_bboxes.keys()):
+               bbox = frame_bboxes[idx-1] 
+            else:
+                bbox = frame_bboxes[idx]
             if (bbox[0] == 0 and bbox[1] == 0 and bbox[2] == 0 and bbox[3] == 0) or (bbox[0] == 0 and bbox[1] == 0 and bbox[2] == img.shape[1] and bbox[3] == img.shape[0]):
                 cropped_imgs.append(img)
                 continue

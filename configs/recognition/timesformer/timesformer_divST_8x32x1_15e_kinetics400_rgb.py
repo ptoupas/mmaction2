@@ -5,14 +5,15 @@ model = dict(
     type='Recognizer3D',
     backbone=dict(
         type='TimeSformer',
-        pretrained=  # noqa: E251
-        'https://download.openmmlab.com/mmaction/recognition/timesformer/vit_base_patch16_224.pth',  # noqa: E501
+        # pretrained=  # noqa: E251
+        # 'https://download.openmmlab.com/mmaction/recognition/timesformer/vit_base_patch16_224.pth',  # noqa: E501
         num_frames=8,
         img_size=224,
         patch_size=16,
         embed_dims=768,
         in_channels=3,
-        dropout_ratio=0.25,
+        dropout_ratio=0.3,
+        frozen_stages=5,
         transformer_layers=None,
         attention_type='divided_space_time',
         norm_cfg=dict(type='LN', eps=1e-6)),
@@ -86,7 +87,7 @@ test_pipeline = [
     dict(type='ToTensor', keys=['imgs', 'label'])
 ]
 data = dict(
-    videos_per_gpu=8,
+    videos_per_gpu=16,
     workers_per_gpu=8,
     test_dataloader=dict(videos_per_gpu=1),
     train=dict(
@@ -116,7 +117,7 @@ log_config = dict(
 # optimizer
 optimizer = dict(
     type='SGD',
-    lr=0.007,
+    lr=0.005,
     momentum=0.9,
     paramwise_cfg=dict(
         custom_keys={
@@ -124,18 +125,19 @@ optimizer = dict(
             '.backbone.pos_embed': dict(decay_mult=0.0),
             '.backbone.time_embed': dict(decay_mult=0.0)
         }),
-    weight_decay=1e-4,
+    weight_decay=5e-4,
     nesterov=True)  # this lr is used for 8 gpus
 optimizer_config = dict(grad_clip=dict(max_norm=40, norm_type=2))
 
 # learning policy
-lr_config = dict(policy='step', step=[13, 20],
+lr_config = dict(policy='step', step=[25, 40],
                  warmup='linear',
                  warmup_by_epoch=True,
-                 warmup_iters=3,
+                 warmup_iters=5,
                  warmup_ratio=0.1)
-total_epochs = 25
+total_epochs = 50
 
 # runtime settings
-checkpoint_config = dict(interval=1)
-work_dir = './work_dirs/timesformer_divST_8x32x1_15e_certhbot_rgb_v2'
+checkpoint_config = dict(interval=5)
+load_from = 'checkpoints/timesformer/timesformer_divST_8x32x1_15e_kinetics400_rgb-3f8e5d03.pth'
+work_dir = './work_dirs/timesformer_certhbot_har/timesformer_divST_8x32x1_15e_certhbot_rgb_v12'

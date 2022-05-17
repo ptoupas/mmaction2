@@ -1,28 +1,28 @@
 _base_ = ['../../_base_/models/x3d.py']
 model = dict(
     type='Recognizer3D',
-    backbone=dict(type='X3D', frozen_stages = 2, gamma_w=1, gamma_b=2.25, gamma_d=2.2),
+    backbone=dict(type='X3D', frozen_stages = -1, gamma_w=1, gamma_b=2.25, gamma_d=2.2),
     cls_head=dict(
         type='X3DHead',
         in_channels=432,
         num_classes=101,
         multi_class=False,
         spatial_type='avg',
-        dropout_ratio=0.7,
+        dropout_ratio=0.8,
         fc1_bias=False),
     # model training and testing settings
     train_cfg=None,
-    test_cfg=dict(average_clips='prob')
-)
+    test_cfg=dict(average_clips='prob'))
+    # test_cfg=dict(average_clips='prob',num_clips=10,num_crops=3))
+
 # dataset settings
 dataset_type = 'VideoDataset'
 
-data_root = '/data/datasets/ucf101/videos'
-data_root_val = '/data/datasets/ucf101/videos'
-split = 1
-ann_file_train = f'/data/datasets/ucf101/ucf101_train_split_{split}_videos_mini.txt'
-ann_file_val = f'/data/datasets/ucf101/ucf101_val_split_{split}_videos_mini.txt'
-ann_file_test = f'/data/datasets/ucf101/ucf101_val_split_{split}_videos_mini.txt'
+data_root = '/second_ext4/ptoupas/data/ucf101/videos'
+data_root_val = '/second_ext4/ptoupas/data/ucf101/videos'
+ann_file_train = '/second_ext4/ptoupas/data/ucf101/ucf101_train_split_1_videos.txt'
+ann_file_val = '/second_ext4/ptoupas/data/ucf101/ucf101_val_split_1_videos.txt'
+ann_file_test = '/second_ext4/ptoupas/data/ucf101/ucf101_val_split_1_videos.txt'
 
 # dataset_type = 'RawframeDataset'
 # data_root = 'data/hmdb51/rawframes'
@@ -86,8 +86,8 @@ test_pipeline = [
     # dict(type='DecordDecode'),
     dict(type='PyAVDecode'),
     dict(type='Resize', scale=(-1, 256)),
-    dict(type='CenterCrop', crop_size=256),
-    # dict(type='ThreeCrop', crop_size=256),
+    # dict(type='CenterCrop', crop_size=256),
+    dict(type='ThreeCrop', crop_size=256),
     dict(type='Normalize', **img_norm_cfg),
     dict(type='FormatShape', input_format='NCTHW'),
     dict(type='Collect', keys=['imgs', 'label'], meta_keys=[]),

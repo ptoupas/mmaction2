@@ -194,8 +194,10 @@ class SampleFrames:
         """
         ori_clip_len = self.clip_len * self.frame_interval
         avg_interval = (num_frames - ori_clip_len + 1) / float(self.num_clips)
-        if avg_interval < 3.0:
-            avg_interval = 3.0
+        # Think about setting a fixed interval between different clips (e.g. at 5 frames or at 1 frame)
+        # if avg_interval < 3.0:
+        #     avg_interval = 3.0
+        # avg_interval = 3.0
         # if num_frames > ori_clip_len - 1:
         base_offsets = np.arange(self.num_clips) * avg_interval
         clip_offsets = (base_offsets + avg_interval / 2.0).astype(np.int)

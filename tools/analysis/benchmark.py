@@ -87,6 +87,7 @@ def main():
             pure_inf_time += elapsed
             fps = (i + 1 - num_warmup) / pure_inf_time
             print(f'Overall fps: {fps:.1f} video / s')
+            print(f'Overall sec per video: {(1/fps):.3f}')
             break
 
 
