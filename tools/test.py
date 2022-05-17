@@ -3,6 +3,7 @@ import argparse
 import os
 import os.path as osp
 import warnings
+import numpy as np
 
 import mmcv
 import torch
@@ -98,6 +99,15 @@ def parse_args():
         '--tensorrt',
         action='store_true',
         help='Whether to test with TensorRT engine or not')
+    parser.add_argument(
+        '--quant_params',
+        action='store_true',
+        help='Whether to quantize the model stored parameters or not')
+    parser.add_argument(
+        '--fixed_fractional',
+        type=int,
+        default=8,
+        help='Number of bits for the fractional part of the fixed point')
     args = parser.parse_args()
     if 'LOCAL_RANK' not in os.environ:
         os.environ['LOCAL_RANK'] = str(args.local_rank)
@@ -111,6 +121,34 @@ def parse_args():
         args.eval_options = args.options
     return args
 
+def quantize_tensor(torch_tensor, fractional_bits, is_denominator=False):
+    torch_to_numpy = torch_tensor.numpy()
+
+    shift_left = np.ones((torch_to_numpy.shape))*(2**fractional_bits)
+    shift_left = shift_left.astype(np.float32)
+
+    shift_right = np.ones((torch_to_numpy.shape))*(2**(-fractional_bits))
+    shift_right = shift_right.astype(np.float32)
+
+    fp_data = torch_to_numpy * shift_left
+    if is_denominator:
+        neg_close_zero = np.where((fp_data>-0.5) & (fp_data<0))
+        fp_data[neg_close_zero] -= 0.55
+        pos_close_zero = np.where((fp_data<0.5) & (fp_data>0))
+        fp_data[pos_close_zero] += 0.55
+
+    if fp_data.min() < -32768 or fp_data.max() > 32767:
+        print("Overflow on conversion to int16")
+        # exit()
+        of_high = np.where(fp_data>32767)
+        fp_data[of_high] = 32767
+        of_low = np.where(fp_data<-32768)
+        fp_data[of_low] = -32767
+        
+    fp_data = np.rint(fp_data).astype(np.short)
+    fq = fp_data * shift_right
+
+    return torch.from_numpy(fq)
 
 def turn_off_pretrained(cfg):
     # recursively find all pretrained in the model config,
@@ -155,6 +193,29 @@ def inference_pytorch(args, cfg, distributed, data_loader):
 
     if args.fuse_conv_bn:
         model = fuse_conv_bn(model)
+    
+    if args.quant_params:
+        model.eval()
+        with torch.no_grad():
+            for name, layer in model.named_modules():
+                low_precision_tensor = None
+                if hasattr(layer, 'weight') and layer.weight is not None:
+                    # print(name, layer, 'weight')
+                    low_precision_tensor = quantize_tensor(layer.weight.clone(), args.fixed_fractional)
+                    layer.weight.data = low_precision_tensor
+                if hasattr(layer, 'bias') and layer.bias is not None:
+                    # print(name, layer, 'bias')
+                    low_precision_tensor = quantize_tensor(layer.bias.clone(), args.fixed_fractional)
+                    layer.bias.data = low_precision_tensor
+                if hasattr(layer, 'running_mean') and layer.running_mean is not None:
+                    # print(name, layer, 'running_mean')
+                    low_precision_tensor = quantize_tensor(layer.running_mean.clone(), args.fixed_fractional)
+                    layer.running_mean.data = low_precision_tensor
+                if hasattr(layer, 'running_var') and layer.running_var is not None:
+                    # print(name, layer, 'running_var')
+                    low_precision_tensor = quantize_tensor(layer.running_var.clone(), args.fixed_fractional, is_denominator=True)
+                    layer.running_var.data = low_precision_tensor
+                continue
 
     if not distributed:
         model = build_dp(

@@ -1,5 +1,6 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import torch
+import cv2
 from torch import nn
 
 from ..builder import RECOGNIZERS
@@ -60,9 +61,37 @@ class Recognizer3D(BaseRecognizer):
             else:
                 feat = torch.cat(feats)
         else:
-            feat = self.extract_feat(imgs)
-            if self.with_neck:
-                feat, _ = self.neck(feat)
+            if 'num_clips' in self.test_cfg.keys() and 'num_crops' in self.test_cfg.keys():
+                clips = self.test_cfg['num_clips']
+                crops = self.test_cfg['num_crops']
+                intermediate_feats = []
+                for b in range(batches):
+                    self.reset_gap_statistics = True
+                    for ns in range(crops):
+                        # Save images for validation of the input clips and frames flow
+                        # imgs_new = imgs[ns*clips:ns*clips+clips,:].cpu().numpy()
+                        # num_frames = imgs_new.shape[2]
+                        # for cl in range(clips):
+                        #     for fr in range(num_frames):
+                        #         curr_image = imgs_new[cl,:,fr,:].transpose(1,2,0)
+                        #         curr_image = cv2.cvtColor(curr_image, cv2.COLOR_RGB2BGR)
+                        #         cv2.imwrite('/home/ptoupas/Development/mmaction2/img_{}_{}_{}.jpg'.format(ns, cl, fr), curr_image)
+                        # print(f"Crop number {ns+1}")
+                        # imgs_new = imgs[ns*clips:ns*clips+clips,:]
+                        # self.reset_gap_statistics = True
+                        for c in range(clips):
+                            # print(f"Current clip: {b*crops*clips+ns*clips+c}")
+                            imgs_new = imgs[b*crops*clips+ns*clips+c,:].unsqueeze(0)
+                            feat_new = self.extract_feat(imgs_new)
+                            self.reset_gap_statistics = False
+                            intermediate_feats.append(feat_new)
+                feat = torch.cat(intermediate_feats, 0)
+                if self.with_neck:
+                    feat, _ = self.neck(feat)
+            else:
+                feat = self.extract_feat(imgs)
+                if self.with_neck:
+                    feat, _ = self.neck(feat)                
 
         if self.feature_extraction:
             feat_dim = len(feat[0].size()) if isinstance(feat, tuple) else len(

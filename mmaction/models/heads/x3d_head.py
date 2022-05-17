@@ -5,6 +5,43 @@ from mmcv.cnn import normal_init
 from ..builder import HEADS
 from .base import BaseHead
 
+import numpy as np
+import torch
+quant_fmaps = False
+def quant_fmap(fmap, fractional_bits=10):
+    # torch_to_numpy = fmap.cpu().numpy()
+    fmap_shape = list(fmap.shape)
+
+    shift_left = torch.ones(fmap_shape, dtype=torch.float32, device=torch.device('cuda:0'))*(2**fractional_bits)
+    # shift_left = np.ones((fmap_shape))*(2**fractional_bits)
+    # shift_left = shift_left.astype(np.float32)
+    # shift_left = torch.from_numpy(shift_left).to(torch.device('cuda:0'))
+
+    shift_right = torch.ones(fmap_shape, dtype=torch.float32, device=torch.device('cuda:0'))*(2**(-fractional_bits))
+    # shift_right = np.ones((fmap_shape))*(2**(-fractional_bits))
+    # shift_right = shift_right.astype(np.float32)
+    # shift_right = torch.from_numpy(shift_right).to(torch.device('cuda:0'))
+
+    fp_data = fmap * shift_left
+
+    if fp_data.min() < -32768 or fp_data.max() > 32767:
+        # print("Overflow on conversion to int16")
+        # exit()
+        # of_high = np.where(fp_data>32767)
+        # fp_data[of_high] = 32767
+        # of_low = np.where(fp_data<-32768)
+        # fp_data[of_low] = -32767
+        fp_data = fp_data.where(fp_data>=-32768.,torch.tensor(-32768.).to(torch.device('cuda:0')))
+        fp_data = fp_data.where(fp_data<=32767.,torch.tensor(32767.).to(torch.device('cuda:0')))
+
+    # fp_data = np.rint(fp_data).astype(np.short)
+    fp_data = torch.round(fp_data).short()
+    fp = fp_data * shift_right
+
+    # res = torch.from_numpy(fq)
+    # del torch_to_numpy, shift_left, shift_right, fp_data, fq
+    del shift_left, shift_right, fp_data
+    return fp
 
 @HEADS.register_module()
 class X3DHead(BaseHead):
@@ -72,20 +109,44 @@ class X3DHead(BaseHead):
         Returns:
             torch.Tensor: The classification scores for input samples.
         """
-        # [N, in_channels, T, H, W]
-        assert self.pool is not None
-        x = self.pool(x)
-        # [N, in_channels, 1, 1, 1]
-        # [N, in_channels, 1, 1, 1]
-        x = x.view(x.shape[0], -1)
-        # [N, in_channels]
-        x = self.fc1(x)
-        # [N, 2048]
-        x = self.relu(x)
+        if quant_fmaps:
+            # [N, in_channels, T, H, W]
+            assert self.pool is not None
+            x = quant_fmap(x)
+            x = self.pool(x)
+            # [N, in_channels, 1, 1, 1]
+            # [N, in_channels, 1, 1, 1]
+            x = x.view(x.shape[0], -1)
+            # [N, in_channels]
+            x = quant_fmap(x)
+            x = self.fc1(x)
+            # [N, 2048]
+            x = quant_fmap(x)
+            x = self.relu(x)
 
-        if self.dropout is not None:
-            x = self.dropout(x)
+            if self.dropout is not None:
+                x = quant_fmap(x)
+                x = self.dropout(x)
 
-        cls_score = self.fc2(x)
-        # [N, num_classes]
+            x = quant_fmap(x)
+            cls_score = self.fc2(x)
+            cls_score = quant_fmap(cls_score)
+            # [N, num_classes]
+        else:
+            # [N, in_channels, T, H, W]
+            assert self.pool is not None
+            x = self.pool(x)
+            # [N, in_channels, 1, 1, 1]
+            # [N, in_channels, 1, 1, 1]
+            x = x.view(x.shape[0], -1)
+            # [N, in_channels]
+            x = self.fc1(x)
+            # [N, 2048]
+            x = self.relu(x)
+
+            if self.dropout is not None:
+                x = self.dropout(x)
+
+            cls_score = self.fc2(x)
+            # [N, num_classes]
         return cls_score

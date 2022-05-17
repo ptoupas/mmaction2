@@ -112,6 +112,8 @@ class BaseRecognizer(nn.Module, metaclass=ABCMeta):
 
         self.fp16_enabled = False
 
+        self.reset_gap_statistics = True
+
     @property
     def with_neck(self):
         """bool: whether the recognizer has a neck"""
@@ -161,6 +163,10 @@ class BaseRecognizer(nn.Module, metaclass=ABCMeta):
                 assert len(x) == 1
                 x = x[0]
         else:
+            if self.reset_gap_statistics:
+                self.backbone.reset_gap_statistics = True
+            else:
+                self.backbone.reset_gap_statistics = False
             x = self.backbone(imgs)
         return x
 
