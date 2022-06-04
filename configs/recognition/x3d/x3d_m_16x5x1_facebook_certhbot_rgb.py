@@ -1,7 +1,8 @@
 _base_ = ['../../_base_/models/x3d.py']
 model = dict(
     type='Recognizer3D',
-    backbone=dict(type='X3D', frozen_stages = -1, gamma_w=1, gamma_b=2.25, gamma_d=2.2),
+    backbone=dict(
+        type='X3D', frozen_stages=-1, gamma_w=1, gamma_b=2.25, gamma_d=2.2),
     cls_head=dict(
         type='X3DHead',
         in_channels=432,
@@ -12,8 +13,7 @@ model = dict(
         fc1_bias=False),
     # model training and testing settings
     train_cfg=None,
-    test_cfg=dict(average_clips='prob')
-)
+    test_cfg=dict(average_clips='prob'))
 # dataset settings
 dataset_type = 'VideoDataset'
 
@@ -24,7 +24,6 @@ split = 1
 
 ann_file_train = f'/data/datasets/certhbot_dataset/certhbot_har_train_split{split}_videos.txt'
 ann_file_val = f'/data/datasets/certhbot_dataset/certhbot_har_val_split{split}_videos.txt'
-
 
 ann_file_test = f'/data/datasets/certhbot_dataset/certhbot_har_val_split{split}_videos.txt'
 
@@ -38,7 +37,8 @@ train_pipeline = [
     dict(type='PyAVDecode'),
     # dict(type='RawFrameDecode'),
     dict(type='Resize', scale=(-1, 320)),
-    dict(type='MultiScaleCrop',
+    dict(
+        type='MultiScaleCrop',
         input_size=224,
         scales=(1, 0.875, 0.75),
         random_crop=False,
@@ -76,17 +76,17 @@ test_pipeline = [
     # dict(type='DecordInit'),
     dict(
         type='SampleFrames',
-        clip_len=16,   
+        clip_len=16,
         frame_interval=5,
-        num_clips=5,
+        num_clips=1,
         test_mode=True),
     # dict(type='RawFrameDecode'),
     # dict(type='DecordDecode'),
     dict(type='PyAVDecode'),
-    dict(type='ApplyBbox'),
+    # dict(type='ApplyBbox'),
     dict(type='Resize', scale=(-1, 256)),
-    # dict(type='CenterCrop', crop_size=256),
-    dict(type='ThreeCrop', crop_size=256),
+    dict(type='CenterCrop', crop_size=256),
+    # dict(type='ThreeCrop', crop_size=256),
     dict(type='Normalize', **img_norm_cfg),
     dict(type='FormatShape', input_format='NCTHW'),
     dict(type='Collect', keys=['imgs', 'label'], meta_keys=[]),
@@ -117,7 +117,8 @@ data = dict(
         pipeline=test_pipeline,
         multi_class=False,
         num_classes=7,
-        bbox_ann_path=bbox_folder_path,))
+        bbox_ann_path=bbox_folder_path,
+    ))
 # optimizer
 optimizer = dict(
     type='SGD', lr=0.011, momentum=0.9,
@@ -130,12 +131,13 @@ optimizer_config = dict(grad_clip=dict(max_norm=40, norm_type=2))
 #                  warmup_iters=10,
 #                  warmup_ratio=0.1,
 #                  step=[35])
-lr_config = dict(policy='CosineAnnealing',
-                 min_lr=0,
-                 warmup='linear',
-                 warmup_by_epoch=True,
-                 warmup_iters=10,
-                 warmup_ratio=0.1)
+lr_config = dict(
+    policy='CosineAnnealing',
+    min_lr=0,
+    warmup='linear',
+    warmup_by_epoch=True,
+    warmup_iters=10,
+    warmup_ratio=0.1)
 # lr_config = dict(policy='CosineRestart', # https://github.com/open-mmlab/mmcv/blob/master/mmcv/runner/hooks/lr_updater.py#L9
 #                  warmup='linear',
 #                  warmup_by_epoch=True,
@@ -169,4 +171,6 @@ workflow = [('train', 1)]
 load_from = 'checkpoints/x3d/x3d_m_facebook_16x5x1_kinetics400_rgb_20201027-3f42382a.pth'
 resume_from = None
 # set this True for multi-GPU training
-find_unused_parameters=False
+find_unused_parameters = False
+
+trt_model = "checkpoints/trt_models/x3d_m_7_fp32.engine"
