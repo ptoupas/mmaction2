@@ -1068,12 +1068,13 @@ class DecordInit:
 
         file_obj = io.BytesIO(self.file_client.get(results['filename']))
         try:
-            container = decord.VideoReader(file_obj, num_threads=self.num_threads)
+            container = decord.VideoReader(
+                file_obj, num_threads=self.num_threads)
         except Exception as e:
             container = None
         if container is None:
             return None
-            
+
         results['video_reader'] = container
         results['total_frames'] = len(container)
         return results

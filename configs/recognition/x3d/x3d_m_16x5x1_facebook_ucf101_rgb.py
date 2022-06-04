@@ -1,7 +1,8 @@
 _base_ = ["../../_base_/models/x3d.py"]
 model = dict(
     type="Recognizer3D",
-    backbone=dict(type="X3D", frozen_stages=-1, gamma_w=1, gamma_b=2.25, gamma_d=2.2),
+    backbone=dict(
+        type="X3D", frozen_stages=-1, gamma_w=1, gamma_b=2.25, gamma_d=2.2),
     cls_head=dict(
         type="X3DHead",
         in_channels=432,
@@ -32,8 +33,7 @@ ann_file_test = f"/data/datasets/ucf101/ucf101_val_split_{split}_videos_mini.txt
 # ann_file_val = 'data/hmdb51/hmdb51_val_split_1_rawframes.txt'
 
 img_norm_cfg = dict(
-    mean=[114.75, 114.75, 114.75], std=[57.38, 57.38, 57.38], to_bgr=False
-)
+    mean=[114.75, 114.75, 114.75], std=[57.38, 57.38, 57.38], to_bgr=False)
 train_pipeline = [
     dict(type="PyAVInit"),
     # dict(type='DecordInit'),
@@ -61,8 +61,11 @@ val_pipeline = [
     dict(type="PyAVInit"),
     # dict(type='DecordInit'),
     dict(
-        type="SampleFrames", clip_len=16, frame_interval=5, num_clips=1, test_mode=True
-    ),
+        type="SampleFrames",
+        clip_len=16,
+        frame_interval=5,
+        num_clips=1,
+        test_mode=True),
     # dict(type='RawFrameDecode'),
     # dict(type='DecordDecode'),
     dict(type="PyAVDecode"),
@@ -78,8 +81,11 @@ test_pipeline = [
     dict(type="PyAVInit"),
     # dict(type='DecordInit'),
     dict(
-        type="SampleFrames", clip_len=16, frame_interval=5, num_clips=1, test_mode=True
-    ),
+        type="SampleFrames",
+        clip_len=16,
+        frame_interval=5,
+        num_clips=1,
+        test_mode=True),
     # dict(type='RawFrameDecode'),
     # dict(type='DecordDecode'),
     dict(type="PyAVDecode"),
@@ -122,8 +128,8 @@ data = dict(
 )
 # optimizer
 optimizer = dict(
-    type="SGD", lr=0.005, momentum=0.9, weight_decay=0.0001
-)  # this lr is used for 8 gpus
+    type="SGD", lr=0.005, momentum=0.9,
+    weight_decay=0.0001)  # this lr is used for 8 gpus
 optimizer_config = dict(grad_clip=dict(max_norm=40, norm_type=2))
 # learning policy
 # lr_config = dict(policy='fixed',
@@ -155,7 +161,8 @@ lr_config = dict(
 #                  restart_weights=[1, 1])
 total_epochs = 10
 checkpoint_config = dict(interval=1)
-evaluation = dict(interval=1, metrics=["top_k_accuracy", "mean_class_accuracy"])
+evaluation = dict(
+    interval=1, metrics=["top_k_accuracy", "mean_class_accuracy"])
 log_config = dict(
     interval=5,
     hooks=[
@@ -168,7 +175,7 @@ log_config = dict(
 # fp16 = dict()
 # precise batchnormalization setting
 # precise_bn = dict()
-trt_model="checkpoints/trt_models/x3d_m.trt"
+trt_model = "checkpoints/trt_models/x3d_m.trt"
 
 # runtime settings
 dist_params = dict(backend="nccl")

@@ -105,6 +105,7 @@ class TimeSformer(nn.Module):
                  num_transformer_layers=12,
                  in_channels=3,
                  dropout_ratio=0.,
+                 frozen_stages=-1,
                  transformer_layers=None,
                  attention_type='divided_space_time',
                  norm_cfg=dict(type='LN', eps=1e-6),
@@ -120,6 +121,7 @@ class TimeSformer(nn.Module):
         self.embed_dims = embed_dims
         self.num_transformer_layers = num_transformer_layers
         self.attention_type = attention_type
+        self.frozen_stages = frozen_stages
 
         self.patch_embed = PatchEmbed(
             img_size=img_size,
@@ -213,6 +215,24 @@ class TimeSformer(nn.Module):
 
         self.transformer_layers = build_transformer_layer_sequence(
             transformer_layers)
+
+        if self.frozen_stages >= 0:
+            self.cls_token.requires_grad = False
+            self.pos_embed.requires_grad = False
+            self.time_embed.requires_grad = False
+
+            self.patch_embed.eval()
+            for param in self.patch_embed.parameters():
+                param.requires_grad = False
+            self.norm.eval()
+            for param in self.norm.parameters():
+                param.requires_grad = False
+
+        for i in range(0, self.frozen_stages + 1):
+            m = getattr(self.transformer_layers, f'layers')[i]
+            m.eval()
+            for param in m.parameters():
+                param.requires_grad = False
 
     def init_weights(self, pretrained=None):
         """Initiate the parameters either from existing checkpoint or from

@@ -1,26 +1,25 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import copy
+import os
 import os.path as osp
+import time
 import warnings
 from abc import ABCMeta, abstractmethod
 from collections import OrderedDict, defaultdict
-
-import os
-import seaborn as sn
-import pandas as pd
-import matplotlib.pyplot as plt
 from pathlib import Path
-import time
 
+import matplotlib.pyplot as plt
 import mmcv
 import numpy as np
+import pandas as pd
+import seaborn as sn
 import torch
 from mmcv.utils import print_log
 from torch.utils.data import Dataset
 
-from ..core import (mean_average_precision, mean_class_accuracy,
-                    mmit_mean_average_precision, top_k_accuracy,
-                    confusion_matrix)
+from ..core import (confusion_matrix, mean_average_precision,
+                    mean_class_accuracy, mmit_mean_average_precision,
+                    top_k_accuracy)
 from .pipelines import Compose
 
 
@@ -243,6 +242,8 @@ class BaseDataset(Dataset, metaclass=ABCMeta):
                 # from the one in sklearn. The True labels here are on x-axis 
                 # and the Predicted labels here are on y-axis. In sklearn, these
                 # two axes are switched.
+                # print(list(pred_results))
+                # print(list(gt_labels))
                 conf_matrix = confusion_matrix(pred_results, gt_labels,
                                                labels=np.arange(7).tolist())
                 # eval_results['confusion_matrix'] = conf_matrix
@@ -259,6 +260,9 @@ class BaseDataset(Dataset, metaclass=ABCMeta):
                 ax.set_ylabel('Predicted')
                 ax.xaxis.set_ticklabels(['drink', 'eat', 'lie', 'sit', 'stand', 'talk_to_phone', 'walk'])
                 ax.yaxis.set_ticklabels(['drink', 'eat', 'lie', 'sit', 'stand', 'talk_to_phone', 'walk'])
+                # ax.xaxis.set_ticklabels(['Drink', 'Eat', 'Read_Book', 'Answer_Phone', 'Write_on_Paper', 'Use_Laptop', 'Use_Vacuum_Cleaner', 'Cheer', 'Sit_Still', 'Toss_Paper', 'Play_Game', 'Lie_Down', 'Walk', 'Play_Guitar', 'Stand_up', 'Sit_down'])
+                # ax.yaxis.set_ticklabels(['Drink', 'Eat', 'Read_Book', 'Answer_Phone', 'Write_on_Paper', 'Use_Laptop', 'Use_Vacuum_Cleaner', 'Cheer', 'Sit_Still', 'Toss_Paper', 'Play_Game', 'Lie_Down', 'Walk', 'Play_Guitar', 'Stand_up', 'Sit_down'])
+
                 fig.savefig(os.path.join(save_path, f'{curr_timestamp}.png'))
                 log_msg = f'\n{conf_matrix}'
                 print_log(log_msg, logger=logger)
