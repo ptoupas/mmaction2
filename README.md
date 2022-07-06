@@ -17,18 +17,6 @@
     </sup>
   </div>
 
-  [📘Documentation](https://mmaction2.readthedocs.io/en/latest/) |
-  [🛠️Installation](https://mmaction2.readthedocs.io/en/latest/install.html) |
-  [👀Model Zoo](https://mmaction2.readthedocs.io/en/latest/modelzoo.html) |
-  [🆕Update News](https://mmaction2.readthedocs.io/en/latest/changelog.html) |
-  [🚀Ongoing Projects](https://github.com/open-mmlab/mmaction2/projects) |
-  [🤔Reporting Issues](https://github.com/open-mmlab/mmaction2/issues/new/choose)
-</div>
-
-## Introduction
-
-English | [简体中文](/README_zh-CN.md)
-
 [![Documentation](https://readthedocs.org/projects/mmaction2/badge/?version=latest)](https://mmaction2.readthedocs.io/en/latest/)
 [![actions](https://github.com/open-mmlab/mmaction2/workflows/build/badge.svg)](https://github.com/open-mmlab/mmaction2/actions)
 [![codecov](https://codecov.io/gh/open-mmlab/mmaction2/branch/master/graph/badge.svg)](https://codecov.io/gh/open-mmlab/mmaction2)
@@ -37,10 +25,23 @@ English | [简体中文](/README_zh-CN.md)
 [![Average time to resolve an issue](https://isitmaintained.com/badge/resolution/open-mmlab/mmaction2.svg)](https://github.com/open-mmlab/mmaction2/issues)
 [![Percentage of issues still open](https://isitmaintained.com/badge/open/open-mmlab/mmaction2.svg)](https://github.com/open-mmlab/mmaction2/issues)
 
+[📘Documentation](https://mmaction2.readthedocs.io/en/latest/) |
+[🛠️Installation](https://mmaction2.readthedocs.io/en/latest/install.html) |
+[👀Model Zoo](https://mmaction2.readthedocs.io/en/latest/modelzoo.html) |
+[🆕Update News](https://mmaction2.readthedocs.io/en/latest/changelog.html) |
+[🚀Ongoing Projects](https://github.com/open-mmlab/mmaction2/projects) |
+[🤔Reporting Issues](https://github.com/open-mmlab/mmaction2/issues/new/choose)
+
+</div>
+
+English | [简体中文](/README_zh-CN.md)
+
+## Introduction
+
 MMAction2 is an open-source toolbox for video understanding based on PyTorch.
 It is a part of the [OpenMMLab](http://openmmlab.org/) project.
 
-The master branch works with **PyTorch 1.3+**.
+The master branch works with **PyTorch 1.5+**.
 
 <div align="center">
   <div style="float:left;margin-right:10px;">
@@ -69,7 +70,7 @@ The master branch works with **PyTorch 1.3+**.
 
 - **Well tested and documented**: We provide detailed documentation and API reference, as well as unit tests.
 
-## Updates
+## What's New
 
 - (2022-03-04) We support **Multigrid** on Kinetics400, achieve 76.07% Top-1 accuracy and accelerate training speed.
 - (2021-11-24) We support **2s-AGCN** on NTU60 XSub, achieve 86.06% Top-1 accuracy on joint stream and 86.89% Top-1 accuracy on bone stream respectively.
@@ -264,15 +265,21 @@ Please refer to [FAQ](docs/faq.md) for frequently asked questions.
 
 Currently, there are many research works and projects built on MMAction2 by users from community, such as:
 
-- Video Swin Transformer. [[paper]](https://arxiv.org/abs/2106.13230)[[github]](https://github.com/SwinTransformer/Video-Swin-Transformer)
-- Evidential Deep Learning for Open Set Action Recognition, ICCV 2021 **Oral**. [[paper]](https://arxiv.org/abs/2107.10161)[[github]](https://github.com/Cogito2012/DEAR)
-- Rethinking Self-supervised Correspondence Learning: A Video Frame-level Similarity Perspective, ICCV 2021 **Oral**. [[paper]](https://arxiv.org/abs/2103.17263)[[github]](https://github.com/xvjiarui/VFS)
+- Video Swin Transformer. [\[paper\]](https://arxiv.org/abs/2106.13230)[\[github\]](https://github.com/SwinTransformer/Video-Swin-Transformer)
+- Evidential Deep Learning for Open Set Action Recognition, ICCV 2021 **Oral**. [\[paper\]](https://arxiv.org/abs/2107.10161)[\[github\]](https://github.com/Cogito2012/DEAR)
+- Rethinking Self-supervised Correspondence Learning: A Video Frame-level Similarity Perspective, ICCV 2021 **Oral**. [\[paper\]](https://arxiv.org/abs/2103.17263)[\[github\]](https://github.com/xvjiarui/VFS)
 
 etc., check [projects.md](docs/projects.md) to see all related projects.
 
-## License
+## Contributing
 
-This project is released under the [Apache 2.0 license](LICENSE).
+We appreciate all contributions to improve MMAction2. Please refer to [CONTRIBUTING.md](https://github.com/open-mmlab/mmcv/blob/master/CONTRIBUTING.md) in MMCV for more details about the contributing guideline.
+
+## Acknowledgement
+
+MMAction2 is an open-source project that is contributed by researchers and engineers from various colleges and companies.
+We appreciate all the contributors who implement their methods or add new features and users who give valuable feedback.
+We wish that the toolbox and benchmark could serve the growing research community by providing a flexible toolkit to reimplement existing methods and develop their new models.
 
 ## Citation
 
@@ -287,15 +294,9 @@ If you find this project useful in your research, please consider cite:
 }
 ```
 
-## Contributing
+## License
 
-We appreciate all contributions to improve MMAction2. Please refer to [CONTRIBUTING.md](https://github.com/open-mmlab/mmcv/blob/master/CONTRIBUTING.md) in MMCV for more details about the contributing guideline.
-
-## Acknowledgement
-
-MMAction2 is an open-source project that is contributed by researchers and engineers from various colleges and companies.
-We appreciate all the contributors who implement their methods or add new features and users who give valuable feedback.
-We wish that the toolbox and benchmark could serve the growing research community by providing a flexible toolkit to reimplement existing methods and develop their new models.
+This project is released under the [Apache 2.0 license](LICENSE).
 
 ## Projects in OpenMMLab
 

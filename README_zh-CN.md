@@ -17,19 +17,6 @@
     </sup>
   </div>
 
-  [📘文档](https://mmaction2.readthedocs.io/en/latest/) |
-  [🛠️安装指南](https://mmaction2.readthedocs.io/en/latest/install.html) |
-  [👀模型库](https://mmaction2.readthedocs.io/en/latest/modelzoo.html) |
-  [🆕更新](https://mmaction2.readthedocs.io/en/latest/changelog.html) |
-  [🚀进行中项目](https://github.com/open-mmlab/mmaction2/projects) |
-  [🤔问题反馈](https://github.com/open-mmlab/mmaction2/issues/new/choose)
-
-</div>
-
-## 简介
-
-[English](/README.md) | 简体中文
-
 [![Documentation](https://readthedocs.org/projects/mmaction2/badge/?version=latest)](https://mmaction2.readthedocs.io/zh_CN/latest/)
 [![actions](https://github.com/open-mmlab/mmaction2/workflows/build/badge.svg)](https://github.com/open-mmlab/mmaction2/actions)
 [![codecov](https://codecov.io/gh/open-mmlab/mmaction2/branch/master/graph/badge.svg)](https://codecov.io/gh/open-mmlab/mmaction2)
@@ -38,9 +25,22 @@
 [![Average time to resolve an issue](https://isitmaintained.com/badge/resolution/open-mmlab/mmaction2.svg)](https://github.com/open-mmlab/mmaction2/issues)
 [![Percentage of issues still open](https://isitmaintained.com/badge/open/open-mmlab/mmaction2.svg)](https://github.com/open-mmlab/mmaction2/issues)
 
+[📘文档](https://mmaction2.readthedocs.io/en/latest/) |
+[🛠️安装指南](https://mmaction2.readthedocs.io/en/latest/install.html) |
+[👀模型库](https://mmaction2.readthedocs.io/en/latest/modelzoo.html) |
+[🆕更新](https://mmaction2.readthedocs.io/en/latest/changelog.html) |
+[🚀进行中项目](https://github.com/open-mmlab/mmaction2/projects) |
+[🤔问题反馈](https://github.com/open-mmlab/mmaction2/issues/new/choose)
+
+</div>
+
+[English](/README.md) | 简体中文
+
+## 简介
+
 MMAction2 是一款基于 PyTorch 的视频理解开源工具箱，是 [OpenMMLab](http://openmmlab.org/) 项目的成员之一
 
-主分支代码目前支持 **PyTorch 1.3 以上**的版本
+主分支代码目前支持 **PyTorch 1.5 以上**的版本
 
 <div align="center">
   <div style="float:left;margin-right:10px;">
@@ -258,15 +258,20 @@ MMAction2 将跟进学界的最新进展，并支持更多算法和框架。如�
 
 目前有许多研究工作或工程项目基于 MMAction2 搭建，例如：
 
-- Evidential Deep Learning for Open Set Action Recognition, ICCV 2021 **Oral**. [[论文]](https://arxiv.org/abs/2107.10161)[[代码]](https://github.com/Cogito2012/DEAR)
-- Rethinking Self-supervised Correspondence Learning: A Video Frame-level Similarity Perspective, ICCV 2021 **Oral**. [[论文]](https://arxiv.org/abs/2103.17263)[[代码]](https://github.com/xvjiarui/VFS)
-- Video Swin Transformer. [[论文]](https://arxiv.org/abs/2106.13230)[[代码]](https://github.com/SwinTransformer/Video-Swin-Transformer)
+- Evidential Deep Learning for Open Set Action Recognition, ICCV 2021 **Oral**. [\[论文\]](https://arxiv.org/abs/2107.10161)[\[代码\]](https://github.com/Cogito2012/DEAR)
+- Rethinking Self-supervised Correspondence Learning: A Video Frame-level Similarity Perspective, ICCV 2021 **Oral**. [\[论文\]](https://arxiv.org/abs/2103.17263)[\[代码\]](https://github.com/xvjiarui/VFS)
+- Video Swin Transformer. [\[论文\]](https://arxiv.org/abs/2106.13230)[\[代码\]](https://github.com/SwinTransformer/Video-Swin-Transformer)
 
 更多详情可见 [相关工作](docs/projects.md)
 
-## 许可
+## 参与贡献
 
-该项目开源自 [Apache 2.0 license](/LICENSE)
+我们非常欢迎用户对于 MMAction2 做出的任何贡献，可以参考 [贡献指南](/.github/CONTRIBUTING.md) 文件了解更多细节
+
+## 致谢
+
+MMAction2 是一款由不同学校和公司共同贡献的开源项目。我们感谢所有为项目提供算法复现和新功能支持的贡献者，以及提供宝贵反馈的用户。
+我们希望该工具箱和基准测试可以为社区提供灵活的代码工具，供用户复现现有算法并开发自己的新模型，从而不断为开源社区提供贡献。
 
 ## 引用
 
@@ -281,14 +286,9 @@ MMAction2 将跟进学界的最新进展，并支持更多算法和框架。如�
 }
 ```
 
-## 参与贡献
+## 许可
 
-我们非常欢迎用户对于 MMAction2 做出的任何贡献，可以参考 [贡献指南](/.github/CONTRIBUTING.md) 文件了解更多细节
-
-## 致谢
-
-MMAction2 是一款由不同学校和公司共同贡献的开源项目。我们感谢所有为项目提供算法复现和新功能支持的贡献者，以及提供宝贵反馈的用户。
-我们希望该工具箱和基准测试可以为社区提供灵活的代码工具，供用户复现现有算法并开发自己的新模型，从而不断为开源社区提供贡献。
+该项目开源自 [Apache 2.0 license](/LICENSE)
 
 ## OpenMMLab 的其他项目
 
