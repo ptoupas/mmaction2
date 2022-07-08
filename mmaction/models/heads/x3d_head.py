@@ -27,6 +27,7 @@ class X3DHead(BaseHead):
                  loss_cls=dict(type='CrossEntropyLoss'),
                  multi_class=False,
                  spatial_type='avg',
+                 mid_channels = 2048,
                  dropout_ratio=0.5,
                  init_std=0.01,
                  fc1_bias=False):
@@ -40,7 +41,7 @@ class X3DHead(BaseHead):
         else:
             self.dropout = None
         self.in_channels = in_channels
-        self.mid_channels = 2048
+        self.mid_channels = mid_channels
         self.num_classes = num_classes
         self.fc1_bias = fc1_bias
 

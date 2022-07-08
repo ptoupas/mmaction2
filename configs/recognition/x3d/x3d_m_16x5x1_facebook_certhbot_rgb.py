@@ -9,7 +9,7 @@ model = dict(
         num_classes=7,
         multi_class=False,
         spatial_type='avg',
-        dropout_ratio=0.8,
+        dropout_ratio=0.5,
         fc1_bias=False),
     # model training and testing settings
     train_cfg=None,

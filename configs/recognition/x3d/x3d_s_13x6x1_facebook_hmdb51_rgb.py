@@ -33,7 +33,7 @@ train_pipeline = [
         scales=(1, 0.875, 0.75),
         random_crop=False,
         max_wh_scale_gap=0),
-    dict(type='ColorJitter', color_space_aug=True),
+    dict(type='ColorJitter'),
     dict(type='Resize', scale=(192, 192)),
     dict(type='Flip', flip_ratio=0.5),
     dict(type='Normalize', **img_norm_cfg),

@@ -216,6 +216,7 @@ class X3D(nn.Module):
                  num_stages=4,
                  spatial_strides=(2, 2, 2, 2),
                  frozen_stages=-1,
+                 freeze_last_conv=False,
                  se_style='half',
                  se_ratio=1 / 16,
                  use_swish=True,
@@ -250,7 +251,8 @@ class X3D(nn.Module):
         self.spatial_strides = spatial_strides
         assert len(spatial_strides) == num_stages
         self.frozen_stages = frozen_stages
-
+        self.freeze_last_conv = freeze_last_conv
+        
         self.se_style = se_style
         assert self.se_style in ['all', 'half']
         self.se_ratio = se_ratio
@@ -471,6 +473,11 @@ class X3D(nn.Module):
             m = getattr(self, f'layer{i}')
             m.eval()
             for param in m.parameters():
+                param.requires_grad = False
+        
+        if self.freeze_last_conv:
+            self.conv5.eval()
+            for param in self.conv5.parameters():
                 param.requires_grad = False
         # for n, p in self.named_parameters():
         #     print(n, p.requires_grad)
