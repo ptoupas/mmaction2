@@ -26,8 +26,8 @@ except (ImportError, ModuleNotFoundError):
                       '`init_pose_model` form `mmpose.apis`. These apis are '
                       'required in this script! ')
 
-mmdet_root = ''
-mmpose_root = ''
+mmdet_root = '/home/ptoupas/Development/mmdetection'
+mmpose_root = '/home/ptoupas/Development/mmpose'
 
 args = abc.abstractproperty()
 args.det_config = f'{mmdet_root}/configs/faster_rcnn/faster_rcnn_r50_caffe_fpn_mstrain_1x_coco-person.py'  # noqa: E501
@@ -49,6 +49,7 @@ def extract_frame(video_path):
     vid = cv2.VideoCapture(video_path)
     frame_paths = []
     flag, frame = vid.read()
+    img_shape = frame.shape
     cnt = 0
     while flag:
         frame_path = frame_tmpl.format(cnt + 1)
@@ -58,22 +59,34 @@ def extract_frame(video_path):
         cnt += 1
         flag, frame = vid.read()
 
-    return frame_paths
+    return frame_paths, img_shape
 
+def batch(iterable, n=1):
+    l = len(iterable)
+    for ndx in range(0, l, n):
+        yield iterable[ndx:min(ndx + n, l)]
 
-def detection_inference(args, frame_paths):
-    model = init_detector(args.det_config, args.det_checkpoint, args.device)
-    assert model.CLASSES[0] == 'person', ('We require you to use a detector '
-                                          'trained on COCO')
+def detection_inference(args, frame_paths, model=None):
+    if model == None:
+        model = init_detector(args.det_config, args.det_checkpoint, args.device)
+        assert model.CLASSES[0] == 'person', ('We require you to use a detector '
+                                            'trained on COCO')
     results = []
-    print('Performing Human Detection for each frame')
-    prog_bar = mmcv.ProgressBar(len(frame_paths))
-    for frame_path in frame_paths:
+    # print('Performing Human Detection for each frame')
+    # prog_bar = mmcv.ProgressBar(len(frame_paths))
+    
+    for frame_path in batch(frame_paths, 32):
         result = inference_detector(model, frame_path)
-        # We only keep human detections with score larger than det_score_thr
-        result = result[0][result[0][:, 4] >= args.det_score_thr]
-        results.append(result)
-        prog_bar.update()
+        for r in result:
+            curr_r = r[0][r[0][:, 4] >= args.det_score_thr]
+            results.append(curr_r)
+            # prog_bar.update()
+    # for frame_path in frame_paths:
+    #     result = inference_detector(model, frame_path)
+    #     # We only keep human detections with score larger than det_score_thr
+    #     result = result[0][result[0][:, 4] >= args.det_score_thr]
+    #     results.append(result)
+    #     prog_bar.update()
     return results
 
 
@@ -287,11 +300,12 @@ def ntu_det_postproc(vid, det_results):
         return bboxes2bbox(det_results, len(det_results))
 
 
-def pose_inference(args, frame_paths, det_results):
-    model = init_pose_model(args.pose_config, args.pose_checkpoint,
-                            args.device)
-    print('Performing Human Pose Estimation for each frame')
-    prog_bar = mmcv.ProgressBar(len(frame_paths))
+def pose_inference(args, frame_paths, det_results, model=None):
+    if model == None:
+        model = init_pose_model(args.pose_config, args.pose_checkpoint,
+                                args.device)
+    # print('Performing Human Pose Estimation for each frame')
+    # prog_bar = mmcv.ProgressBar(len(frame_paths))
 
     num_frame = len(det_results)
     num_person = max([len(x) for x in det_results])
@@ -303,24 +317,46 @@ def pose_inference(args, frame_paths, det_results):
         pose = inference_top_down_pose_model(model, f, d, format='xyxy')[0]
         for j, item in enumerate(pose):
             kp[j, i] = item['keypoints']
-        prog_bar.update()
+        # prog_bar.update()
     return kp
 
+def extract_bboxes(frame_paths, poses, visualize=False):
+    bboxes = np.zeros(poses.shape[:2]+(4,))
+    for i, f in enumerate(frame_paths):
+        if visualize:
+            img = cv2.imread(f)
+        curr_poses = poses[:,i,:,:]
+        for h in range(curr_poses.shape[0]):
+            xmin = int(np.min(curr_poses[h][np.where(curr_poses[h][:,0] >= 0)][:,0], axis=0))
+            ymin = int(np.min(curr_poses[h][np.where(curr_poses[h][:,1] >= 0)][:,1], axis=0))
+            xmax = int(np.max(curr_poses[h][np.where(curr_poses[h][:,0] >= 0)][:,0], axis=0))
+            ymax = int(np.max(curr_poses[h][np.where(curr_poses[h][:,1] >= 0)][:,1], axis=0))
+            bboxes[h,i] = xmin, ymin, xmax, ymax
+            if visualize:
+                img = cv2.rectangle(img, (xmin, ymin), (xmax, ymax), color=(0, 0, 255), thickness=1)
+                for (x,y) in curr_poses[h]:
+                    img = cv2.circle(img, (int(x),int(y)), radius=1, color=(255, 0, 0), thickness=2)
+        if visualize:
+            cv2.imwrite(f, img)
+    return bboxes
 
-def ntu_pose_extraction(vid, skip_postproc=False):
-    frame_paths = extract_frame(vid)
-    det_results = detection_inference(args, frame_paths)
+def ntu_pose_extraction(vid, skip_postproc=False, label=None, detector_model=None, pose_model=None):
+    frame_paths, img_shape = extract_frame(vid)
+    det_results = detection_inference(args, frame_paths, model=detector_model)
     if not skip_postproc:
         det_results = ntu_det_postproc(vid, det_results)
-    pose_results = pose_inference(args, frame_paths, det_results)
+    pose_results = pose_inference(args, frame_paths, det_results, model=pose_model)
+    bboxes = extract_bboxes(frame_paths, pose_results[..., :2], visualize=False)
+
     anno = dict()
     anno['keypoint'] = pose_results[..., :2]
     anno['keypoint_score'] = pose_results[..., 2]
+    anno['bboxes'] = bboxes
     anno['frame_dir'] = osp.splitext(osp.basename(vid))[0]
-    anno['img_shape'] = (1080, 1920)
-    anno['original_shape'] = (1080, 1920)
+    anno['img_shape'] = img_shape[:-1]
+    anno['original_shape'] = img_shape[:-1]
     anno['total_frames'] = pose_results.shape[1]
-    anno['label'] = int(osp.basename(vid).split('A')[1][:3]) - 1
+    anno['label'] = int(osp.basename(vid).split('A')[1][:3]) - 1 if label == None else label
     shutil.rmtree(osp.dirname(frame_paths[0]))
 
     return anno

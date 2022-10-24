@@ -1,38 +1,34 @@
 # _base_ = ['../../_base_/models/x3d.py']
 model = dict(
     type='Recognizer3D',
-    backbone=dict(type='X3D', frozen_stages = 2, gamma_w=1, gamma_b=2.25, gamma_d=2.2),
+    backbone=dict(
+        type='X3D', frozen_stages=-1, gamma_w=1, gamma_b=2.25, gamma_d=2.2),
     cls_head=dict(
         type='X3DHead',
         in_channels=432,
         num_classes=7,
         multi_class=False,
         spatial_type='avg',
-        dropout_ratio=0.8,
+        dropout_ratio=0.5,
         fc1_bias=False),
     # model training and testing settings
     train_cfg=None,
     test_cfg=dict(average_clips='prob'))
-    # test_cfg=dict(average_clips='prob',num_clips=10,num_crops=3))
+# test_cfg=dict(average_clips='prob',num_clips=10,num_crops=3))
 
 # dataset settings
 dataset_type = 'VideoDataset'
 
 split = 3
 
-bbox_folder_path = '/second_ext4/ptoupas/data/certhbot_har_MSRDailyActivity3D_NTU_RGB/annotations'
+bbox_folder_path = '/data/datasets/certhbot_dataset/annotations'
 
-# data_root = f'/second_ext4/ptoupas/data/certhbot_har/videos'
-# data_root_val = f'/second_ext4/ptoupas/data/certhbot_har/videos'
-# ann_file_train = f'/second_ext4/ptoupas/data/certhbot_har/certhbot_har_train_split{split}_videos.txt'
-# ann_file_val = f'/second_ext4/ptoupas/data/certhbot_har/certhbot_har_val_split{split}_videos.txt'
+data_root = f'/data/datasets/certhbot_dataset/videos'
+data_root_val = f'/data/datasets/certhbot_dataset/videos'
+ann_file_train = f'/data/datasets/certhbot_dataset/certhbot_har_train_split{split}_videos.txt'
+ann_file_val = f'/data/datasets/certhbot_dataset/certhbot_har_val_split{split}_videos.txt'
 
-data_root = f'/second_ext4/ptoupas/data/certhbot_har_MSRDailyActivity3D_NTU_RGB/videos'
-data_root_val = f'/second_ext4/ptoupas/data/certhbot_har_MSRDailyActivity3D_NTU_RGB/videos'
-ann_file_train = f'/second_ext4/ptoupas/data/certhbot_har_MSRDailyActivity3D_NTU_RGB/certhbot_har_train_split{split}_videos.txt'
-ann_file_val = f'/second_ext4/ptoupas/data/certhbot_har_MSRDailyActivity3D_NTU_RGB/certhbot_har_val_split{split}_videos.txt'
-
-ann_file_test = f'/second_ext4/ptoupas/data/certhbot_har/certhbot_har_val_split{split}_videos.txt'
+ann_file_test = f'/data/datasets/certhbot_dataset/certhbot_har_val_split{split}_videos.txt'
 
 img_norm_cfg = dict(
     mean=[114.75, 114.75, 114.75], std=[57.38, 57.38, 57.38], to_bgr=False)
@@ -46,7 +42,8 @@ train_pipeline = [
     dict(type='ColorJitter'),
     dict(type='ApplyBbox'),
     dict(type='Resize', scale=(-1, 320)),
-    dict(type='MultiScaleCrop',
+    dict(
+        type='MultiScaleCrop',
         input_size=224,
         scales=(1, 0.875, 0.75),
         random_crop=False,
@@ -84,7 +81,7 @@ val_pipeline = [
 #     # dict(type='DecordInit'),
 #     dict(
 #         type='SampleFrames',
-#         clip_len=16,   
+#         clip_len=16,
 #         frame_interval=5,
 #         num_clips=1,
 #         test_mode=True),
@@ -103,17 +100,17 @@ test_pipeline = [
     # dict(type='DecordInit'),
     dict(
         type='SampleFrames',
-        clip_len=16,   
+        clip_len=16,
         frame_interval=5,
-        num_clips=5,
+        num_clips=1,
         test_mode=True),
     # dict(type='RawFrameDecode'),
     # dict(type='DecordDecode'),
     dict(type='PyAVDecode'),
-    dict(type='ApplyBbox'),
+    # dict(type='ApplyBbox'),
     dict(type='Resize', scale=(-1, 256)),
-    # dict(type='CenterCrop', crop_size=256),
-    dict(type='ThreeCrop', crop_size=256),
+    dict(type='CenterCrop', crop_size=256),
+    # dict(type='ThreeCrop', crop_size=256),
     dict(type='Normalize', **img_norm_cfg),
     dict(type='FormatShape', input_format='NCTHW'),
     dict(type='Collect', keys=['imgs', 'label'], meta_keys=[]),
@@ -146,11 +143,12 @@ data = dict(
         pipeline=test_pipeline,
         multi_class=False,
         num_classes=7,
-        bbox_ann_path=bbox_folder_path))
+        bbox_ann_path=bbox_folder_path,
+    ))
 # optimizer
 optimizer = dict(
-    type='SGD', lr=0.0035, momentum=0.9,
-    weight_decay=0.0005)  # this lr is used for 8 gpus # try something like 0.0005 or 0.0001
+    type='SGD', lr=0.0035, momentum=0.9, weight_decay=0.0005
+)  # this lr is used for 8 gpus # try something like 0.0005 or 0.0001
 optimizer_config = dict(grad_clip=dict(max_norm=40, norm_type=2))
 # learning policy
 # lr_config = dict(policy='step',
@@ -159,14 +157,13 @@ optimizer_config = dict(grad_clip=dict(max_norm=40, norm_type=2))
 #                  warmup_iters=10,
 #                  warmup_ratio=0.1,
 #                  step=[35])
-lr_config = dict(policy='CosineAnnealing',
-                 min_lr=1e-5,
-                #  by_epoch=True,
-                #  warmup='linear',
-                #  warmup_by_epoch=True,
-                #  warmup_iters=5,
-                #  warmup_ratio=0.1
-                )
+lr_config = dict(
+    policy='CosineAnnealing',
+    min_lr=0,
+    warmup='linear',
+    warmup_by_epoch=True,
+    warmup_iters=10,
+    warmup_ratio=0.1)
 # lr_config = dict(policy='CosineRestart', # https://github.com/open-mmlab/mmcv/blob/master/mmcv/runner/hooks/lr_updater.py#L9
 #                  warmup='linear',
 #                  warmup_by_epoch=True,
@@ -175,10 +172,11 @@ lr_config = dict(policy='CosineAnnealing',
 #                  min_lr=0,
 #                  periods=[10, 20],
 #                  restart_weights=[1, 1])
-total_epochs = 40   # 60 (warmup 5) - 50 (warmup 0)
+total_epochs = 40  # 60 (warmup 5) - 50 (warmup 0)
 checkpoint_config = dict(interval=10)
 evaluation = dict(
-    interval=1, metrics=['top_k_accuracy', 'mean_class_accuracy',  'confusion_matrix'])
+    interval=1,
+    metrics=['top_k_accuracy', 'mean_class_accuracy', 'confusion_matrix'])
 log_config = dict(
     interval=5,
     hooks=[
@@ -204,9 +202,6 @@ load_from = f'work_dirs/x3d_m_certhbot_har_MSRDailyActivity3D_NTU_RGB/x3d_m_16x5
 resume_from = None
 
 # set this True for multi-GPU training
-find_unused_parameters=True
+find_unused_parameters = False
 
-# find_unused_parameters = False
-# gpu_ids = range(0, 1)
-# omnisource = False
-# module_hooks = []
+trt_model = "checkpoints/trt_models/x3d_m_7_fp32.engine"
