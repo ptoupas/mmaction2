@@ -11,6 +11,29 @@ from mmcv.utils import _BatchNorm
 from ...utils import get_root_logger
 from ..builder import BACKBONES
 
+import numpy as np
+import torch
+
+quant_fmaps = False
+def quant_fmap(fmap, int_bits=8, fractional_bits=8):
+    int_range_limit = 2**(int_bits + fractional_bits) // 2
+    fmap_shape = list(fmap.shape)
+
+    shift_left = torch.ones(fmap_shape, dtype=torch.float32, device=torch.device('cuda:0'))*(2**fractional_bits)
+    shift_right = torch.ones(fmap_shape, dtype=torch.float32, device=torch.device('cuda:0'))*(2**(-fractional_bits))
+
+    fp_data = fmap * shift_left
+
+    fp_data = torch.round(fp_data)
+
+    if fp_data.min() < -int_range_limit or fp_data.max() > (int_range_limit - 1):
+        fp_data = fp_data.where(fp_data>=float(-int_range_limit),torch.tensor(float(-int_range_limit)).to(torch.device('cuda:0')))
+        fp_data = fp_data.where(fp_data<=float(int_range_limit - 1),torch.tensor(float(int_range_limit - 1)).to(torch.device('cuda:0')))
+
+    fp = fp_data * shift_right
+
+    del shift_left, shift_right, fp_data
+    return fp
 
 class SEModule(nn.Module):
 
@@ -24,6 +47,7 @@ class SEModule(nn.Module):
         self.fc2 = nn.Conv3d(
             self.bottleneck, channels, kernel_size=1, padding=0)
         self.sigmoid = nn.Sigmoid()
+        self.gap_results = None
 
     @staticmethod
     def _round_width(width, multiplier, min_width=8, divisor=8):
@@ -36,13 +60,35 @@ class SEModule(nn.Module):
         return int(width_out)
 
     def forward(self, x):
-        module_input = x
-        x = self.avg_pool(x)
-        x = self.fc1(x)
-        x = self.relu(x)
-        x = self.fc2(x)
-        x = self.sigmoid(x)
-        return module_input * x
+        if quant_fmaps:
+            module_input = quant_fmap(x)
+            x = quant_fmap(x)
+            x = self.avg_pool(x)
+            x = quant_fmap(x)
+            x = self.fc1(x)
+            x = quant_fmap(x)
+            x = self.relu(x)
+            x = quant_fmap(x)
+            x = self.fc2(x)
+            x = quant_fmap(x)
+            x = self.sigmoid(x)
+            x = quant_fmap(x)
+            res = module_input * x
+            res = quant_fmap(res)
+            return res
+        else:
+            module_input = x
+            x = self.avg_pool(x)
+            gap_out = x.clone()
+            if self.gap_results is None:
+                pass
+            else:
+                x = self.gap_results
+            x = self.fc1(x)
+            x = self.relu(x)
+            x = self.fc2(x)
+            x = self.sigmoid(x)
+            return module_input * x, gap_out
 
 
 class BlockX3D(nn.Module):
@@ -133,6 +179,8 @@ class BlockX3D(nn.Module):
 
         if self.se_ratio is not None:
             self.se_module = SEModule(planes, self.se_ratio)
+            self.gap_results = None
+            self.reset_gap_statistics = True
 
         self.relu = build_activation_layer(self.act_cfg)
 
@@ -141,28 +189,70 @@ class BlockX3D(nn.Module):
 
         def _inner_forward(x):
             """Forward wrapper for utilizing checkpoint."""
-            identity = x
+            if quant_fmaps:
+                identity = quant_fmap(x)
 
-            out = self.conv1(x)
-            out = self.conv2(out)
-            if self.se_ratio is not None:
-                out = self.se_module(out)
+                x = quant_fmap(x)
+                out = self.conv1(x)
+                out = quant_fmap(out)
+                out = self.conv2(out)
+                if self.se_ratio is not None:
+                    out = quant_fmap(out)
+                    out = self.se_module(out)
 
-            out = self.swish(out)
+                out = quant_fmap(out)
+                out = self.swish(out)
 
-            out = self.conv3(out)
+                out = quant_fmap(out)
+                out = self.conv3(out)
+                out = quant_fmap(out)
 
-            if self.downsample is not None:
-                identity = self.downsample(x)
+                if self.downsample is not None:
+                    x = quant_fmap(x)
+                    identity = self.downsample(x)
+                    identity = quant_fmap(identity)
 
-            out = out + identity
+                out = out + identity
+                out = quant_fmap(out)
+            else:
+                identity = x
+
+                out = self.conv1(x)
+                out = self.conv2(out)
+                if self.se_ratio is not None:
+                    if self.reset_gap_statistics:
+                        self.gap_results = None
+                    self.se_module.gap_results = self.gap_results
+                    out, se_out = self.se_module(out)
+                    self.gap_results = se_out
+
+                out = self.swish(out)
+
+                out = self.conv3(out)
+
+                if self.downsample is not None:
+                    identity = self.downsample(x)
+
+                out = out + identity
             return out
 
-        if self.with_cp and x.requires_grad:
-            out = cp.checkpoint(_inner_forward, x)
+        if quant_fmaps:
+            if self.with_cp and x.requires_grad:
+                x = quant_fmap(x)
+                out = cp.checkpoint(_inner_forward, x)
+                out = quant_fmap(out)
+            else:
+                x = quant_fmap(x)
+                out = _inner_forward(x)
+                out = quant_fmap(out)
+            out = self.relu(out)
+            out = quant_fmap(out)
         else:
-            out = _inner_forward(x)
-        out = self.relu(out)
+            if self.with_cp and x.requires_grad:
+                out = cp.checkpoint(_inner_forward, x)
+            else:
+                out = _inner_forward(x)
+            out = self.relu(out)
         return out
 
 
@@ -252,7 +342,7 @@ class X3D(nn.Module):
         assert len(spatial_strides) == num_stages
         self.frozen_stages = frozen_stages
         self.freeze_last_conv = freeze_last_conv
-        
+
         self.se_style = se_style
         assert self.se_style in ['all', 'half']
         self.se_ratio = se_ratio
@@ -309,6 +399,7 @@ class X3D(nn.Module):
             norm_cfg=self.norm_cfg,
             act_cfg=self.act_cfg)
         self.feat_dim = int(self.feat_dim * self.gamma_b)
+        self.reset_gap_statistics = True
 
     @staticmethod
     def _round_width(width, multiplier, min_depth=8, divisor=8):
@@ -474,7 +565,7 @@ class X3D(nn.Module):
             m.eval()
             for param in m.parameters():
                 param.requires_grad = False
-        
+
         if self.freeze_last_conv:
             self.conv5.eval()
             for param in self.conv5.parameters():
@@ -515,12 +606,31 @@ class X3D(nn.Module):
             torch.Tensor: The feature of the input
             samples extracted by the backbone.
         """
-        x = self.conv1_s(x)
-        x = self.conv1_t(x)
-        for layer_name in self.res_layers:
-            res_layer = getattr(self, layer_name)
-            x = res_layer(x)
-        x = self.conv5(x)
+        if quant_fmaps:
+            x = quant_fmap(x)
+            x = self.conv1_s(x)
+            x = quant_fmap(x)
+            x = self.conv1_t(x)
+            for layer_name in self.res_layers:
+                res_layer = getattr(self, layer_name)
+                x = quant_fmap(x)
+                x = res_layer(x)
+                x = quant_fmap(x)
+            x = self.conv5(x)
+            x = quant_fmap(x)
+        else:
+            x = self.conv1_s(x)
+            x = self.conv1_t(x)
+            for layer_name in self.res_layers:
+                res_layer = getattr(self, layer_name)
+                # for n, c in res_layer.named_children():
+                #     if c.se_ratio is not None:
+                #         if self.reset_gap_statistics:
+                #             c.reset_gap_statistics = True
+                #         else:
+                #             c.reset_gap_statistics = False
+                x = res_layer(x)
+            x = self.conv5(x)
         return x
 
     def train(self, mode=True):
