@@ -17,38 +17,21 @@ import torch
 quant_fmaps = False
 def quant_fmap(fmap, int_bits=8, fractional_bits=8):
     int_range_limit = 2**(int_bits + fractional_bits) // 2
-    # torch_to_numpy = fmap.cpu().numpy()
     fmap_shape = list(fmap.shape)
 
     shift_left = torch.ones(fmap_shape, dtype=torch.float32, device=torch.device('cuda:0'))*(2**fractional_bits)
-    # shift_left = np.ones((fmap_shape))*(2**fractional_bits)
-    # shift_left = shift_left.astype(np.float32)
-    # shift_left = torch.from_numpy(shift_left).to(torch.device('cuda:0'))
-
     shift_right = torch.ones(fmap_shape, dtype=torch.float32, device=torch.device('cuda:0'))*(2**(-fractional_bits))
-    # shift_right = np.ones((fmap_shape))*(2**(-fractional_bits))
-    # shift_right = shift_right.astype(np.float32)
-    # shift_right = torch.from_numpy(shift_right).to(torch.device('cuda:0'))
 
     fp_data = fmap * shift_left
 
-    # fp_data = np.rint(fp_data)
     fp_data = torch.round(fp_data)
 
     if fp_data.min() < -int_range_limit or fp_data.max() > (int_range_limit - 1):
-        # print("Overflow on conversion to int16")
-        # exit()
-        # of_high = np.where(fp_data>32767)
-        # fp_data[of_high] = 32767
-        # of_low = np.where(fp_data<-32768)
-        # fp_data[of_low] = -32767
         fp_data = fp_data.where(fp_data>=float(-int_range_limit),torch.tensor(float(-int_range_limit)).to(torch.device('cuda:0')))
         fp_data = fp_data.where(fp_data<=float(int_range_limit - 1),torch.tensor(float(int_range_limit - 1)).to(torch.device('cuda:0')))
 
     fp = fp_data * shift_right
 
-    # res = torch.from_numpy(fq)
-    # del torch_to_numpy, shift_left, shift_right, fp_data, fq
     del shift_left, shift_right, fp_data
     return fp
 
