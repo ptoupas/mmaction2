@@ -100,7 +100,7 @@ test_pipeline = [
 
 data = dict(
     videos_per_gpu=8,
-    workers_per_gpu=1,
+    workers_per_gpu=10,
     train=dict(
         type=dataset_type,
         ann_file=ann_file_train,
@@ -181,7 +181,8 @@ trt_model = "checkpoints/trt_models/x3d_m.trt"
 dist_params = dict(backend="nccl")
 log_level = "INFO"
 work_dir = "./work_dirs/tst/"
-workflow = [("train", 1)]
+# Therefore, the only difference between [('train', 1), ('val', 1)] and [('train', 1)] is that the runner will calculate losses on validation set after each training epoch.
+workflow = [('train', 1), ('val', 1)]
 # use the pre-trained model for the whole X3D-M network
 load_from = (
     "checkpoints/x3d/x3d_m_facebook_16x5x1_kinetics400_rgb_20201027-3f42382a.pth"
@@ -189,3 +190,5 @@ load_from = (
 resume_from = None
 # set this True for multi-GPU training
 find_unused_parameters = False
+
+gpu_ids = range(0, 1)

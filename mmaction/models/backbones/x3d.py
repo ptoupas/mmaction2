@@ -13,8 +13,10 @@ from ..builder import BACKBONES
 
 import numpy as np
 import torch
+
 quant_fmaps = False
-def quant_fmap(fmap, fractional_bits=10):
+def quant_fmap(fmap, int_bits=8, fractional_bits=8):
+    int_range_limit = 2**(int_bits + fractional_bits) // 2
     # torch_to_numpy = fmap.cpu().numpy()
     fmap_shape = list(fmap.shape)
 
@@ -30,18 +32,19 @@ def quant_fmap(fmap, fractional_bits=10):
 
     fp_data = fmap * shift_left
 
-    if fp_data.min() < -32768 or fp_data.max() > 32767:
+    # fp_data = np.rint(fp_data)
+    fp_data = torch.round(fp_data)
+
+    if fp_data.min() < -int_range_limit or fp_data.max() > (int_range_limit - 1):
         # print("Overflow on conversion to int16")
         # exit()
         # of_high = np.where(fp_data>32767)
         # fp_data[of_high] = 32767
         # of_low = np.where(fp_data<-32768)
         # fp_data[of_low] = -32767
-        fp_data = fp_data.where(fp_data>=-32768.,torch.tensor(-32768.).to(torch.device('cuda:0')))
-        fp_data = fp_data.where(fp_data<=32767.,torch.tensor(32767.).to(torch.device('cuda:0')))
+        fp_data = fp_data.where(fp_data>=float(-int_range_limit),torch.tensor(float(-int_range_limit)).to(torch.device('cuda:0')))
+        fp_data = fp_data.where(fp_data<=float(int_range_limit - 1),torch.tensor(float(int_range_limit - 1)).to(torch.device('cuda:0')))
 
-    # fp_data = np.rint(fp_data).astype(np.short)
-    fp_data = torch.round(fp_data).short()
     fp = fp_data * shift_right
 
     # res = torch.from_numpy(fq)
@@ -249,7 +252,7 @@ class BlockX3D(nn.Module):
 
                 out = out + identity
             return out
-        
+
         if quant_fmaps:
             if self.with_cp and x.requires_grad:
                 x = quant_fmap(x)
@@ -356,7 +359,7 @@ class X3D(nn.Module):
         assert len(spatial_strides) == num_stages
         self.frozen_stages = frozen_stages
         self.freeze_last_conv = freeze_last_conv
-        
+
         self.se_style = se_style
         assert self.se_style in ['all', 'half']
         self.se_ratio = se_ratio
@@ -579,7 +582,7 @@ class X3D(nn.Module):
             m.eval()
             for param in m.parameters():
                 param.requires_grad = False
-        
+
         if self.freeze_last_conv:
             self.conv5.eval()
             for param in self.conv5.parameters():

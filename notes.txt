@@ -16,7 +16,7 @@ python tools/test.py configs/recognition/x3d/x3d_m_16x5x1_facebook_certhbot_rgb.
 test on multiple GPUSs:
 ./tools/dist_test.sh configs/recognition/x3d/x3d_m_16x5x1_facebook_certhbot_rgb.py work_dirs/x3d_m_certhbot_har/x3d_m_16x5x1_facebook_certhbot_rgb_v12/latest.pth 2 --eval top_k_accuracy mean_class_accuracy confusion_matrix
 test by introducing error from simulation of quantization on weights:
-python tools/test.py configs/recognition/x3d/x3d_m_16x5x1_facebook_ucf101_rgb.py work_dirs/x3d_m_ucf101/v4_split1/best_top1_acc_epoch_29.pth --eval top_k_accuracy mean_class_accuracy --quant_params --fixed_fractional 8
+python tools/test.py configs/recognition/x3d/x3d_m_16x5x1_facebook_ucf101_rgb.py work_dirs/x3d_m_ucf101/v4_split1/best_top1_acc_epoch_29.pth --eval top_k_accuracy mean_class_accuracy --quant_params --fixed_int 8 --fixed_fractional 9
 
 Get Flops and Params:
 3D
