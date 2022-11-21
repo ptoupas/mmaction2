@@ -7,19 +7,20 @@ _base_ = [
 model = dict(cls_head=dict(num_classes=101))
 
 # dataset settings
-dataset_type = 'RawframeDataset'
-data_root = 'data/ucf101/rawframes/'
-data_root_val = 'data/ucf101/rawframes/'
-split = 1  # official train/test splits. valid numbers: 1, 2, 3
-ann_file_train = f'data/ucf101/ucf101_train_split_{split}_rawframes.txt'
-ann_file_val = f'data/ucf101/ucf101_val_split_{split}_rawframes.txt'
-ann_file_test = f'data/ucf101/ucf101_val_split_{split}_rawframes.txt'
+dataset_type = 'VideoDataset'
+data_root = '/second_ext4/ptoupas/data/ucf101/videos'
+data_root_val = '/second_ext4/ptoupas/data/ucf101/videos'
+split = 1
+ann_file_train = f'/second_ext4/ptoupas/data/ucf101/ucf101_train_split_{split}_videos.txt'
+ann_file_val = f'/second_ext4/ptoupas/data/ucf101/ucf101_val_split_{split}_videos.txt'
+ann_file_test = f'/second_ext4/ptoupas/data/ucf101/ucf101_val_split_{split}_videos.txt'
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_bgr=False)
 
 train_pipeline = [
+    dict(type='PyAVInit'),
     dict(type='SampleFrames', clip_len=8, frame_interval=4, num_clips=1),
-    dict(type='RawFrameDecode'),
+    dict(type='PyAVDecode'),
     dict(type='Resize', scale=(-1, 256)),
     dict(type='RandomResizedCrop'),
     dict(type='Resize', scale=(224, 224), keep_ratio=False),
@@ -30,13 +31,14 @@ train_pipeline = [
     dict(type='ToTensor', keys=['imgs', 'label'])
 ]
 val_pipeline = [
+    dict(type='PyAVInit'),
     dict(
         type='SampleFrames',
         clip_len=8,
         frame_interval=4,
         num_clips=1,
         test_mode=True),
-    dict(type='RawFrameDecode'),
+    dict(type='PyAVDecode'),
     dict(type='Resize', scale=(-1, 256)),
     dict(type='CenterCrop', crop_size=224),
     dict(type='Normalize', **img_norm_cfg),
@@ -45,13 +47,14 @@ val_pipeline = [
     dict(type='ToTensor', keys=['imgs'])
 ]
 test_pipeline = [
+    dict(type='PyAVInit'),
     dict(
         type='SampleFrames',
         clip_len=8,
         frame_interval=4,
         num_clips=10,
         test_mode=True),
-    dict(type='RawFrameDecode'),
+    dict(type='PyAVDecode'),
     dict(type='Resize', scale=(-1, 256)),
     dict(type='ThreeCrop', crop_size=256),
     dict(type='Normalize', **img_norm_cfg),
@@ -95,3 +98,5 @@ total_epochs = 40
 work_dir = './work_dirs/slowonly_k400_pretrained_r50_8x4x1_40e_ucf101_rgb'
 load_from = 'https://download.openmmlab.com/mmaction/recognition/slowonly/slowonly_r50_8x8x1_256e_kinetics400_rgb/slowonly_r50_8x8x1_256e_kinetics400_rgb_20200703-a79c555a.pth'  # noqa: E501
 find_unused_parameters = False
+
+gpu_ids = range(0, 1)

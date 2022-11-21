@@ -1,12 +1,12 @@
 _base_ = '../../_base_/models/c3d_sports1m_pretrained.py'
 
 dataset_type = 'VideoDataset'
-data_root = '/data/datasets/ucf101/videos'
-data_root_val = '/data/datasets/ucf101/videos'
+data_root = '/second_ext4/ptoupas/data/ucf101/videos'
+data_root_val = '/second_ext4/ptoupas/data/ucf101/videos'
 split = 1
-ann_file_train = f'/data/datasets/ucf101/ucf101_train_split_{split}_videos.txt'
-ann_file_val = f'/data/datasets/ucf101/ucf101_val_split_{split}_videos.txt'
-ann_file_test = f'/data/datasets/ucf101/ucf101_val_split_{split}_videos.txt'
+ann_file_train = f'/second_ext4/ptoupas/data/ucf101/ucf101_train_split_{split}_videos.txt'
+ann_file_val = f'/second_ext4/ptoupas/data/ucf101/ucf101_val_split_{split}_videos.txt'
+ann_file_test = f'/second_ext4/ptoupas/data/ucf101/ucf101_val_split_{split}_videos.txt'
 img_norm_cfg = dict(mean=[104, 117, 128], std=[1, 1, 1], to_bgr=False)
 
 train_pipeline = [
@@ -54,8 +54,8 @@ test_pipeline = [
     dict(type='ToTensor', keys=['imgs', 'label'])
 ]
 data = dict(
-    videos_per_gpu=30,
-    workers_per_gpu=2,
+    videos_per_gpu=8,
+    workers_per_gpu=10,
     test_dataloader=dict(videos_per_gpu=1),
     train=dict(
         type=dataset_type,
@@ -93,6 +93,8 @@ log_config = dict(
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
 work_dir = f'./work_dirs/c3d_sports1m_16x1x1_45e_ucf101_split_{split}_rgb/'
-load_from = None
+load_from = 'checkpoints/c3d/c3d_sports1m_16x1x1_45e_ucf101_rgb_20201021-26655025.pth'
 resume_from = None
 workflow = [('train', 1)]
+find_unused_parameters = False
+gpu_ids = range(0, 1)
