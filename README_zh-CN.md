@@ -25,9 +25,9 @@
 [![Average time to resolve an issue](https://isitmaintained.com/badge/resolution/open-mmlab/mmaction2.svg)](https://github.com/open-mmlab/mmaction2/issues)
 [![Percentage of issues still open](https://isitmaintained.com/badge/open/open-mmlab/mmaction2.svg)](https://github.com/open-mmlab/mmaction2/issues)
 
-[📘文档](https://mmaction2.readthedocs.io/en/latest/) |
-[🛠️安装指南](https://mmaction2.readthedocs.io/en/latest/install.html) |
-[👀模型库](https://mmaction2.readthedocs.io/en/latest/modelzoo.html) |
+[📘文档](https://mmaction2.readthedocs.io/zh_CN/latest/) |
+[🛠️安装指南](https://mmaction2.readthedocs.io/zh_CN/latest/install.html) |
+[👀模型库](https://mmaction2.readthedocs.io/zh_CN/latest/modelzoo.html) |
 [🆕更新](https://mmaction2.readthedocs.io/en/latest/changelog.html) |
 [🚀进行中项目](https://github.com/open-mmlab/mmaction2/projects) |
 [🤔问题反馈](https://github.com/open-mmlab/mmaction2/issues/new/choose)
@@ -38,7 +38,7 @@
 
 ## 简介
 
-MMAction2 是一款基于 PyTorch 的视频理解开源工具箱，是 [OpenMMLab](http://openmmlab.org/) 项目的成员之一
+MMAction2 是一款基于 PyTorch 的视频理解开源工具箱，是 [OpenMMLab](https://openmmlab.com/) 项目的成员之一
 
 主分支代码目前支持 **PyTorch 1.5 以上**的版本
 
@@ -71,6 +71,19 @@ MMAction2 是一款基于 PyTorch 的视频理解开源工具箱，是 [OpenMMLa
 
 ## 更新记录
 
+### 🌟 1.x 预览版本
+
+全新的 **MMAction2 v1.0.0rc0** 版本已经在 2022.09.01 发布：
+
+- 基于 [MMEngine](https://github.com/open-mmlab/mmengine) 统一了各组件接口。
+- 全面支持混合精度，训练测试速度更快。
+- 更加灵活的[架构](https://mmaction2.readthedocs.io/en/1.x)。
+
+欢迎在 [1.x branch](https://github.com/open-mmlab/mmaction2/tree/1.x) 发现更多的新特性。欢迎 issue 和 PR。
+
+### 💎 稳定版本
+
+- (2022-03-04) 在 K400 上支持 **Multigrid** 训练，达到 76.07% 的识别准确率并加快了训练速度。
 - (2021-11-24) 在 NTU60 XSub 上支持 **2s-AGCN**， 在 joint stream 和 bone stream 上分别达到 86.06% 和 86.89% 的识别准确率。
 - (2021-10-29) 支持基于 skeleton 模态和 rgb 模态的时空动作检测和行为识别 demo (demo/demo_video_structuralize.py)。
 - (2021-10-26) 在 NTU60 3d 关键点标注数据集上训练测试 **STGCN**, 可达到 84.61% (高于 [paper](https://www.aaai.org/ocs/index.php/AAAI/AAAI18/paper/viewPaper/17135) 中的 81.5%) 的识别准确率。
@@ -296,6 +309,7 @@ MMAction2 是一款由不同学校和公司共同贡献的开源项目。我们�
 - [MMClassification](https://github.com/open-mmlab/mmclassification): OpenMMLab 图像分类工具箱
 - [MMDetection](https://github.com/open-mmlab/mmdetection): OpenMMLab 目标检测工具箱
 - [MMDetection3D](https://github.com/open-mmlab/mmdetection3d): OpenMMLab 新一代通用 3D 目标检测平台
+- [MMYOLO](https://github.com/open-mmlab/mmyolo): OpenMMLab YOLO 系列工具箱和基准测试
 - [MMRotate](https://github.com/open-mmlab/mmrotate): OpenMMLab 旋转框检测工具箱与测试基准
 - [MMSegmentation](https://github.com/open-mmlab/mmsegmentation): OpenMMLab 语义分割工具箱
 - [MMOCR](https://github.com/open-mmlab/mmocr): OpenMMLab 全流程文字检测识别理解工具箱

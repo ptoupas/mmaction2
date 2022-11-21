@@ -39,7 +39,7 @@ English | [简体中文](/README_zh-CN.md)
 ## Introduction
 
 MMAction2 is an open-source toolbox for video understanding based on PyTorch.
-It is a part of the [OpenMMLab](http://openmmlab.org/) project.
+It is a part of the [OpenMMLab](https://openmmlab.com/) project.
 
 The master branch works with **PyTorch 1.5+**.
 
@@ -71,6 +71,18 @@ The master branch works with **PyTorch 1.5+**.
 - **Well tested and documented**: We provide detailed documentation and API reference, as well as unit tests.
 
 ## What's New
+
+### 🌟 Preview of 1.x version
+
+A brand new version of **MMAction2 v1.0.0rc0** was released in 01/09/2022:
+
+- Unified interfaces of all components based on [MMEngine](https://github.com/open-mmlab/mmengine).
+- Faster training and testing speed with complete support of mixed precision training.
+- More flexible [architecture](https://mmaction2.readthedocs.io/en/1.x).
+
+Find more new features in [1.x branch](https://github.com/open-mmlab/mmaction2/tree/1.x). Issues and PRs are welcome!
+
+### 💎 Stable version
 
 - (2022-03-04) We support **Multigrid** on Kinetics400, achieve 76.07% Top-1 accuracy and accelerate training speed.
 - (2021-11-24) We support **2s-AGCN** on NTU60 XSub, achieve 86.06% Top-1 accuracy on joint stream and 86.89% Top-1 accuracy on bone stream respectively.
@@ -304,6 +316,7 @@ This project is released under the [Apache 2.0 license](LICENSE).
 - [MMClassification](https://github.com/open-mmlab/mmclassification): OpenMMLab image classification toolbox and benchmark.
 - [MMDetection](https://github.com/open-mmlab/mmdetection): OpenMMLab detection toolbox and benchmark.
 - [MMDetection3D](https://github.com/open-mmlab/mmdetection3d): OpenMMLab's next-generation platform for general 3D object detection.
+- [MMYOLO](https://github.com/open-mmlab/mmyolo): OpenMMLab YOLO series toolbox and benchmark.
 - [MMRotate](https://github.com/open-mmlab/mmrotate): OpenMMLab rotated object detection toolbox and benchmark.
 - [MMSegmentation](https://github.com/open-mmlab/mmsegmentation): OpenMMLab semantic segmentation toolbox and benchmark.
 - [MMOCR](https://github.com/open-mmlab/mmocr): OpenMMLab text detection, recognition, and understanding toolbox.
