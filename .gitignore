@@ -139,3 +139,7 @@ mmaction/tools/*
 # unignore ipython notebook files in demo
 !demo/*.ipynb
 mmaction/.mim
+
+/wandb
+/checkpoints
+/fpga_modeling_reports
