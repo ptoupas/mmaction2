@@ -139,6 +139,8 @@ mmaction/tools/*
 !demo/*.ipynb
 mmaction/.mim
 
+checkpoints/
+wandb/
 fpga_modeling_reports/
 *.onnx
 *.npy

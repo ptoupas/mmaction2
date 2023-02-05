@@ -45,7 +45,7 @@ def _convert_batchnorm(module):
 
 def pytorch2onnx(model,
                  input_shape,
-                 opset_version=11,
+                 opset_version=14,
                  show=False,
                  output_file='tmp.onnx',
                  verify=False):
@@ -54,7 +54,7 @@ def pytorch2onnx(model,
     Args:
         model (:obj:`nn.Module`): The pytorch model to be exported.
         input_shape (tuple[int]): The input tensor shape of the model.
-        opset_version (int): Opset version of onnx used. Default: 11.
+        opset_version (int): Opset version of onnx used. Default: 14.
         show (bool): Determines whether to print the onnx model architecture.
             Default: False.
         output_file (str): Output onnx model name. Default: 'tmp.onnx'.
@@ -114,7 +114,7 @@ def parse_args():
     parser.add_argument('checkpoint', help='checkpoint file')
     parser.add_argument('--show', action='store_true', help='show onnx graph')
     parser.add_argument('--output-file', type=str, default='tmp.onnx')
-    parser.add_argument('--opset-version', type=int, default=11)
+    parser.add_argument('--opset-version', type=int, default=14)
     parser.add_argument(
         '--verify',
         action='store_true',
@@ -140,7 +140,7 @@ def parse_args():
 if __name__ == '__main__':
     args = parse_args()
 
-    assert args.opset_version == 11, 'MMAction2 only supports opset 11 now'
+    assert args.opset_version == 14, 'MMAction2 only supports opset 14 now'
 
     cfg = mmcv.Config.fromfile(args.config)
     # import modules from string list.
