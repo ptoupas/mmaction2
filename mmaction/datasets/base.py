@@ -12,8 +12,9 @@ import matplotlib.pyplot as plt
 import mmcv
 import numpy as np
 import pandas as pd
-import seaborn as sn
+import seaborn as sns
 import torch
+from sklearn.metrics import classification_report, ConfusionMatrixDisplay
 from mmcv.utils import print_log
 from torch.utils.data import Dataset
 
@@ -91,7 +92,7 @@ class BaseDataset(Dataset, metaclass=ABCMeta):
         self.power = power
         self.bbox_ann_path = bbox_ann_path
 
-        # assert not (self.multi_class and self.sample_by_class)
+        assert not (self.multi_class and self.sample_by_class)
         assert not (self.sample_by_class)
 
         self.dynamic_length = dynamic_length
@@ -230,10 +231,23 @@ class BaseDataset(Dataset, metaclass=ABCMeta):
                 eval_results['mean_class_accuracy'] = mean_acc
                 log_msg = f'\nmean_acc\t{mean_acc:.4f}'
                 print_log(log_msg, logger=logger)
+
+                msg = f'Evaluating per_class_acc ...'
+                if logger is None:
+                    msg = '\n' + msg
+                print_log(msg, logger=logger)
                 log_msg = f'\nper_class_acc\t'
                 for i, acc in enumerate(class_acc):
                     log_msg += f'{i}: {acc:.4f}  '
                 print_log(log_msg, logger=logger)
+                target_names = ['drink', 'eat', 'lie', 'sit', 'stand', 'talk_to_phone', 'walk']
+                print(classification_report(gt_labels, np.argmax(results, axis=1), digits=4, target_names=target_names))
+
+                # cm = confusion_matrix(gt_labels, np.argmax(results, axis=1))
+                # disp = ConfusionMatrixDisplay(confusion_matrix=cm,
+                #                             display_labels=target_names)
+                # disp.plot(cmap='cividis')
+                # plt.savefig('confusion_matrix.png')
                 continue
 
             if metric == 'confusion_matrix':
@@ -242,30 +256,29 @@ class BaseDataset(Dataset, metaclass=ABCMeta):
                 # from the one in sklearn. The True labels here are on x-axis 
                 # and the Predicted labels here are on y-axis. In sklearn, these
                 # two axes are switched.
-                # print(list(pred_results))
-                # print(list(gt_labels))
-                conf_matrix = confusion_matrix(pred_results, gt_labels,
-                                               labels=np.arange(7).tolist())
-                # eval_results['confusion_matrix'] = conf_matrix
-                df_cm = pd.DataFrame(conf_matrix)
-                fig = plt.figure(figsize=(20,15))
-                ax = fig.add_subplot()
-                sn.heatmap(df_cm, annot=True, ax=ax)
-                save_path = os.path.join(Path(__file__).parent.parent.parent,
-                                         'work_dirs', 'confusion_matrices')
-                if not os.path.exists(save_path):
-                    os.mkdir(save_path)
-                curr_timestamp = int(time.time())
-                ax.set_xlabel('True')
-                ax.set_ylabel('Predicted')
-                ax.xaxis.set_ticklabels(['drink', 'eat', 'lie', 'sit', 'stand', 'talk_to_phone', 'walk'])
-                ax.yaxis.set_ticklabels(['drink', 'eat', 'lie', 'sit', 'stand', 'talk_to_phone', 'walk'])
-                # ax.xaxis.set_ticklabels(['Drink', 'Eat', 'Read_Book', 'Answer_Phone', 'Write_on_Paper', 'Use_Laptop', 'Use_Vacuum_Cleaner', 'Cheer', 'Sit_Still', 'Toss_Paper', 'Play_Game', 'Lie_Down', 'Walk', 'Play_Guitar', 'Stand_up', 'Sit_down'])
-                # ax.yaxis.set_ticklabels(['Drink', 'Eat', 'Read_Book', 'Answer_Phone', 'Write_on_Paper', 'Use_Laptop', 'Use_Vacuum_Cleaner', 'Cheer', 'Sit_Still', 'Toss_Paper', 'Play_Game', 'Lie_Down', 'Walk', 'Play_Guitar', 'Stand_up', 'Sit_down'])
+                # ('Drink', 'Eat', 'Read_Book', 'Answer_Phone', 'Write_on_Paper', 'Use_Laptop', 'Use_Vacuum_Cleaner', 'Cheer', 'Sit_Still', 'Toss_Paper', 'Play_Game', 'Lie_Down', 'Walk', 'Play_Guitar', 'Stand_up', 'Sit_down')
+                classes = ('drink', 'eat', 'lie', 'sit', 'stand', 'talk_to_phone', 'walk')
 
-                fig.savefig(os.path.join(save_path, f'{curr_timestamp}.png'))
-                log_msg = f'\n{conf_matrix}'
-                print_log(log_msg, logger=logger)
+                cf_matrix = confusion_matrix(pred_results, gt_labels,
+                                               labels=np.arange(len(classes)).tolist())
+                df_cm = pd.DataFrame(cf_matrix, index=[i for i in classes],
+                                    columns=[i for i in classes])
+                plt.figure(figsize=(12, 7))
+                plt.xlabel('True')
+                plt.ylabel('Predicted')
+                fig = sns.heatmap(df_cm, annot=True).get_figure()
+
+                eval_results['confusion_matrix'] = fig
+
+                # save_path = os.path.join(Path(__file__).parent.parent.parent,
+                #                          'work_dirs', 'confusion_matrices')
+                # if not os.path.exists(save_path):
+                #     os.mkdir(save_path)
+                # curr_timestamp = int(time.time())
+                # fig.savefig(os.path.join(save_path, f'{curr_timestamp}.png'))
+
+                # log_msg = f'\n{conf_matrix}'
+                # print_log(log_msg, logger=logger)
                 continue
 
             if metric in [

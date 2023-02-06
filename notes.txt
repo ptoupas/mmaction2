@@ -7,16 +7,16 @@ or
 python tools/data/build_file_list.py kinetics700_2020 /home/active/ptoupas/external_hdd/Kinetics_700/kinetics700_2020/videos_val/ --level 2 --format videos --num-split 1 --subset val --shuffle --out-root-path /home/active/ptoupas/external_hdd/Kinetics_700
 
 train:
-python tools/train.py configs/recognition/x3d/x3d_m_16x5x1_facebook_certhbot_rgb.py --validate --test-best
+python tools/train.py configs/recognition/x3d/x3d_m_16x5x1_facebook_certhbot_rgb.py --validate --gpu-ids 0 // --test-best
 train on multiple GPUSs:
 ./tools/dist_train.sh configs/recognition/x3d/x3d_m_16x5x1_facebook_certhbot_rgb.py 2 --validate --test-best
 
 test:
-python tools/test.py configs/recognition/x3d/x3d_m_16x5x1_facebook_certhbot_rgb.py work_dirs/x3d_m_certhbot_har/x3d_m_16x5x1_facebook_certhbot_rgb_v12/latest.pth --eval top_k_accuracy mean_class_accuracy confusion_matrix
+python tools/test.py configs/recognition/x3d/x3d_m_16x5x1_facebook_certhbot_rgb.py /second_ext4/ptoupas/mmaction2/work_dirs/x3d_m_certhbot_har/x3d_m_16x5x1_facebook_certhbot_rgb_v12/latest.pth --eval top_k_accuracy mean_class_accuracy confusion_matrix
 test on multiple GPUSs:
-./tools/dist_test.sh configs/recognition/x3d/x3d_m_16x5x1_facebook_certhbot_rgb.py work_dirs/x3d_m_certhbot_har/x3d_m_16x5x1_facebook_certhbot_rgb_v12/latest.pth 2 --eval top_k_accuracy mean_class_accuracy confusion_matrix
+./tools/dist_test.sh configs/recognition/x3d/x3d_m_16x5x1_facebook_certhbot_rgb.py /second_ext4/ptoupas/mmaction2/work_dirs/x3d_m_certhbot_har/x3d_m_16x5x1_facebook_certhbot_rgb_v12/latest.pth 2 --eval top_k_accuracy mean_class_accuracy confusion_matrix
 test by introducing error from simulation of quantization on weights:
-python tools/test.py configs/recognition/x3d/x3d_m_16x5x1_facebook_ucf101_rgb.py work_dirs/x3d_m_ucf101/v4_split1/best_top1_acc_epoch_29.pth --eval top_k_accuracy mean_class_accuracy --quant_params --fixed_int 8 --fixed_fractional 9
+python tools/test.py configs/recognition/x3d/x3d_m_16x5x1_facebook_ucf101_rgb.py /second_ext4/ptoupas/mmaction2/work_dirs/x3d_m_ucf101/v4_split1/best_top1_acc_epoch_29.pth --eval top_k_accuracy mean_class_accuracy --quant_params --fixed_int 8 --fixed_fractional 9
 
 Get Flops and Params:
 3D
@@ -38,8 +38,8 @@ python tools/analysis/fpga_modeling_onnx.py x3d_m configs/recognition/x3d/x3d_m_
 python tools/analysis/fpga_modeling_torch.py x3d_m configs/recognition/x3d/x3d_m_16x5x1_facebook_kinetics400_rgb.py --use_frames
 
 Tensorboard:
-tensorboard --logdir=work_dirs --host=160.40.53.211
-tensorboard --logdir_spec=baseline:work_dirs/x3d_m_certhbot_har,extended:work_dirs/x3d_m_certhbot_har_MSRDailyActivity3D_NTU_RGB --host=160.40.53.211
+tensorboard --logdir=/second_ext4/ptoupas/mmaction2/work_dirs --host=160.40.53.211
+tensorboard --logdir_spec=baseline:/second_ext4/ptoupas/mmaction2/work_dirs/x3d_m_certhbot_har,extended:/second_ext4/ptoupas/mmaction2/work_dirs/x3d_m_certhbot_har_MSRDailyActivity3D_NTU_RGB --host=160.40.53.211
 
 Test Mode:
     dict(

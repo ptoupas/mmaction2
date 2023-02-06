@@ -8,7 +8,7 @@ model = dict(
         num_classes=400,
         multi_class=False,
         spatial_type='avg',
-        dropout_ratio=0.7,
+        dropout_ratio=0.5,
         fc1_bias=False),
     # model training and testing settings
     train_cfg=None,
@@ -22,7 +22,7 @@ model = dict(
 #         in_channels=864,
 #         num_classes=7,
 #         spatial_type='avg',
-#         dropout_ratio=0.6,
+#         dropout_ratio=0.5,
 #         fc1_bias=False),
 #     # model training and testing settings
 #     train_cfg=None,
