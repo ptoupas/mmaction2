@@ -4,6 +4,7 @@ from collections import OrderedDict
 from typing import Any, Optional, Sequence, Tuple, Union
 
 import numpy as np
+from sklearn.metrics import classification_report
 from mmengine.evaluator import BaseMetric
 
 from mmaction.evaluation import (mean_average_precision, mean_class_accuracy,
@@ -108,8 +109,10 @@ class AccMetric(BaseMetric):
                     eval_results[f'top{k}'] = acc
 
             if metric == 'mean_class_accuracy':
-                mean1 = mean_class_accuracy(preds, labels)
+                mean1, per_class_acc = mean_class_accuracy(preds, labels)
                 eval_results['mean1'] = mean1
+                eval_results['per_class_acc'] = per_class_acc
+                eval_results['classification_report'] = '\n' + classification_report(labels, np.argmax(preds, axis=1))
 
             if metric in [
                     'mean_average_precision',

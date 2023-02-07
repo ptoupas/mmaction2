@@ -49,7 +49,7 @@ def main():
         score_list = [apply_softmax(scores) for scores in score_list]
 
     weighted_scores = get_weighted_score(score_list, args.coefficients)
-    mean_class_acc = mean_class_accuracy(weighted_scores, labels)
+    mean_class_acc, _ = mean_class_accuracy(weighted_scores, labels)
     top_1_acc, top_5_acc = top_k_accuracy(weighted_scores, labels, (1, 5))
     print(f'Mean Class Accuracy: {mean_class_acc:.04f}')
     print(f'Top 1 Accuracy: {top_1_acc:.04f}')

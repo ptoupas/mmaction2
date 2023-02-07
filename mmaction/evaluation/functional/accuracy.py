@@ -86,10 +86,10 @@ def mean_class_accuracy(scores, labels):
     cls_cnt = cf_mat.sum(axis=1)
     cls_hit = np.diag(cf_mat)
 
-    mean_class_acc = np.mean(
-        [hit / cnt if cnt else 0.0 for cnt, hit in zip(cls_cnt, cls_hit)])
+    per_class_acc = [hit / cnt if cnt else 0.0 for cnt, hit in zip(cls_cnt, cls_hit)]
+    mean_class_acc = np.mean(per_class_acc)
 
-    return mean_class_acc
+    return mean_class_acc, per_class_acc
 
 
 def top_k_classes(scores, labels, k=10, mode='accurate'):
