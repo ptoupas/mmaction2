@@ -241,7 +241,7 @@ class BaseDataset(Dataset, metaclass=ABCMeta):
                     log_msg += f'{i}: {acc:.4f}  '
                 print_log(log_msg, logger=logger)
                 target_names = ['drink', 'eat', 'lie', 'sit', 'stand', 'talk_to_phone', 'walk']
-                print(classification_report(gt_labels, np.argmax(results, axis=1), digits=4, target_names=target_names))
+                print(classification_report(gt_labels, np.argmax(results, axis=1), digits=4))
 
                 # cm = confusion_matrix(gt_labels, np.argmax(results, axis=1))
                 # disp = ConfusionMatrixDisplay(confusion_matrix=cm,

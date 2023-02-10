@@ -19,28 +19,19 @@ model = dict(
 # dataset settings
 dataset_type = "VideoDataset"
 
-data_root = "/data/datasets/ucf101/videos"
-data_root_val = "/data/datasets/ucf101/videos"
+data_root = "/second_ext4/ptoupas/data/ucf101/videos"
+data_root_val = "/second_ext4/ptoupas/data/ucf101/videos"
 split = 1
-ann_file_train = f"/data/datasets/ucf101/ucf101_train_split_{split}_videos_mini.txt"
-ann_file_val = f"/data/datasets/ucf101/ucf101_val_split_{split}_videos_mini.txt"
-ann_file_test = f"/data/datasets/ucf101/ucf101_val_split_{split}_videos_mini.txt"
-
-# dataset_type = 'RawframeDataset'
-# data_root = 'data/hmdb51/rawframes'
-# data_root_val = 'data/hmdb51/rawframes'
-# ann_file_train = 'data/hmdb51/hmdb51_train_split_1_rawframes.txt'
-# ann_file_val = 'data/hmdb51/hmdb51_val_split_1_rawframes.txt'
+ann_file_train = f"/second_ext4/ptoupas/data/ucf101/ucf101_train_split_{split}_videos.txt"
+ann_file_val = f"/second_ext4/ptoupas/data/ucf101/ucf101_val_split_{split}_videos.txt"
+ann_file_test = f"/second_ext4/ptoupas/data/ucf101/ucf101_val_split_{split}_videos.txt"
 
 img_norm_cfg = dict(
     mean=[114.75, 114.75, 114.75], std=[57.38, 57.38, 57.38], to_bgr=False)
 train_pipeline = [
-    dict(type="PyAVInit"),
-    # dict(type='DecordInit'),
+    dict(type='DecordInit'),
     dict(type="SampleFrames", clip_len=16, frame_interval=5, num_clips=1),
-    # dict(type='DecordDecode'),
-    dict(type="PyAVDecode"),
-    # dict(type='RawFrameDecode'),
+    dict(type='DecordDecode'),
     dict(type="Resize", scale=(-1, 320)),
     dict(
         type="MultiScaleCrop",
@@ -58,17 +49,14 @@ train_pipeline = [
     dict(type="ToTensor", keys=["imgs", "label"]),
 ]
 val_pipeline = [
-    dict(type="PyAVInit"),
-    # dict(type='DecordInit'),
+    dict(type='DecordInit'),
     dict(
         type="SampleFrames",
         clip_len=16,
         frame_interval=5,
         num_clips=1,
         test_mode=True),
-    # dict(type='RawFrameDecode'),
-    # dict(type='DecordDecode'),
-    dict(type="PyAVDecode"),
+    dict(type='DecordDecode'),
     dict(type="Resize", scale=(-1, 320)),
     dict(type="CenterCrop", crop_size=224),
     dict(type="Flip", flip_ratio=0),
@@ -78,17 +66,14 @@ val_pipeline = [
     dict(type="ToTensor", keys=["imgs", "label"]),
 ]
 test_pipeline = [
-    dict(type="PyAVInit"),
-    # dict(type='DecordInit'),
+    dict(type='DecordInit'),
     dict(
         type="SampleFrames",
         clip_len=16,
         frame_interval=5,
         num_clips=1,
         test_mode=True),
-    # dict(type='RawFrameDecode'),
-    # dict(type='DecordDecode'),
-    dict(type="PyAVDecode"),
+    dict(type='DecordDecode'),
     dict(type="Resize", scale=(-1, 256)),
     dict(type="CenterCrop", crop_size=256),
     # dict(type='ThreeCrop', crop_size=256),
@@ -99,7 +84,7 @@ test_pipeline = [
 ]
 
 data = dict(
-    videos_per_gpu=8,
+    videos_per_gpu=32,
     workers_per_gpu=10,
     train=dict(
         type=dataset_type,

@@ -4,7 +4,7 @@ import os
 import os.path as osp
 import warnings
 import numpy as np
-from fpbinary import FpBinary, OverflowEnum, RoundingEnum
+from fxpmath import Fxp
 
 import mmcv
 import torch
@@ -105,14 +105,19 @@ def parse_args():
         action='store_true',
         help='Whether to quantize the model stored parameters or not')
     parser.add_argument(
-        '--fixed_fractional',
+        '--word_length',
         type=int,
-        default=8,
+        default=16,
+        help='Total number of bits of the quantized fixed point words')
+    parser.add_argument(
+        '--n_frac',
+        type=int,
+        default=None,
         help='Number of bits for the fractional part of the fixed point')
     parser.add_argument(
-        '--fixed_int',
+        '--n_int',
         type=int,
-        default=8,
+        default=None,
         help='Number of bits for the integer part of the fixed point')
     args = parser.parse_args()
     if 'LOCAL_RANK' not in os.environ:
@@ -127,43 +132,48 @@ def parse_args():
         args.eval_options = args.options
     return args
 
-def quantize_tensor(torch_tensor, int_bits, fractional_bits, is_denominator=False):
-    int_range_limit = 2**(int_bits + fractional_bits) // 2
-    torch_to_numpy = torch_tensor.numpy()
+def quantize_tensor(tensor, word_length, n_int=None, n_frac=None, is_denominator=False):
+    # Current convertion method
+    fp_converter = Fxp(tensor, signed=True, n_word=word_length, n_frac=n_frac, n_int=n_int)
+    fp_tensor = fp_converter.get_val(dtype=tensor.dtype)
 
-    shift_left = np.ones((torch_to_numpy.shape))*(2**fractional_bits)
-    shift_left = shift_left.astype(np.float32)
+    # Convertion method #1
+    # int_range_limit = 2**(n_int + n_frac) // 2
 
-    shift_right = np.ones((torch_to_numpy.shape))*(2**(-fractional_bits))
-    shift_right = shift_right.astype(np.float32)
+    # shift_left = np.ones((tensor.shape))*(2**n_frac)
+    # shift_left = shift_left.astype(np.float32)
 
-    fp_data = torch_to_numpy * shift_left
-    if is_denominator:
-        neg_close_zero = np.where((fp_data>-0.5) & (fp_data<0))
-        fp_data[neg_close_zero] -= 0.55
-        pos_close_zero = np.where((fp_data<0.5) & (fp_data>0))
-        fp_data[pos_close_zero] += 0.55
+    # shift_right = np.ones((tensor.shape))*(2**(-n_frac))
+    # shift_right = shift_right.astype(np.float32)
 
-    fp_data = np.rint(fp_data)
+    # fp_data = tensor * shift_left
+    # if is_denominator:
+    #     neg_close_zero = np.where((fp_data>-0.5) & (fp_data<0))
+    #     fp_data[neg_close_zero] -= 0.55
+    #     pos_close_zero = np.where((fp_data<0.5) & (fp_data>0))
+    #     fp_data[pos_close_zero] += 0.55
 
-    if fp_data.min() < -int_range_limit or fp_data.max() > (int_range_limit - 1):
-        print("Overflow on conversion to int16")
-        of_high = np.where(fp_data>(int_range_limit - 1))
-        fp_data[of_high] = (int_range_limit - 1)
-        of_low = np.where(fp_data<-int_range_limit)
-        fp_data[of_low] = -int_range_limit
+    # fp_data = np.rint(fp_data)
 
-    fq = fp_data * shift_right
+    # if fp_data.min() < -int_range_limit or fp_data.max() > (int_range_limit - 1):
+    #     print("Overflow on conversion to int16")
+    #     of_high = np.where(fp_data>(int_range_limit - 1))
+    #     fp_data[of_high] = (int_range_limit - 1)
+    #     of_low = np.where(fp_data<-int_range_limit)
+    #     fp_data[of_low] = -int_range_limit
 
-    # initial_shape = torch_to_numpy.shape
-    # fp = [float(FpBinary(int_bits=int_bits, frac_bits=fractional_bits, signed=True, value=v)) for v in torch_to_numpy.flatten()]
+    # fp_tensor = fp_data * shift_right
+
+    # Convertion method #2
+    # initial_shape = tensor.shape
+    # fp = [float(FpBinary(int_bits=n_int, frac_bits=n_frac, signed=True, value=v)) for v in tensor.flatten()]
     # fp = np.array(fp, dtype=np.float32).reshape(initial_shape)
 
     # if is_denominator:
-    #     fp[np.where((fp==0) & (torch_to_numpy>0))] = 2**(-fractional_bits)
-    #     fp[np.where((fp==0) & (torch_to_numpy<0))] = -2**(-fractional_bits)
+    #     fp[np.where((fp==0) & (tensor>0))] = 2**(-n_frac)
+    #     fp[np.where((fp==0) & (tensor<0))] = -2**(-n_frac)
 
-    return torch.from_numpy(fq)
+    return torch.from_numpy(fp_tensor)
 
 def turn_off_pretrained(cfg):
     # recursively find all pretrained in the model config,
@@ -216,20 +226,20 @@ def inference_pytorch(args, cfg, distributed, data_loader):
                 low_precision_tensor = None
                 if hasattr(layer, 'weight') and layer.weight is not None:
                     # print(name, layer, 'weight')
-                    low_precision_tensor = quantize_tensor(layer.weight.clone(), args.fixed_int, args.fixed_fractional)
+                    low_precision_tensor = quantize_tensor(layer.weight.numpy(), args.word_length, args.n_int, args.n_frac)
                     layer.weight.data = low_precision_tensor
                 if hasattr(layer, 'bias') and layer.bias is not None:
                     # print(name, layer, 'bias')
-                    low_precision_tensor = quantize_tensor(layer.bias.clone(), args.fixed_int, args.fixed_fractional)
+                    low_precision_tensor = quantize_tensor(layer.bias.numpy(), args.word_length, args.n_int, args.n_frac)
                     layer.bias.data = low_precision_tensor
                 if hasattr(layer, 'running_mean') and layer.running_mean is not None:
                     # print(name, layer, 'running_mean')
-                    low_precision_tensor = quantize_tensor(layer.running_mean.clone(), args.fixed_int, args.fixed_fractional)
+                    low_precision_tensor = quantize_tensor(layer.running_mean.numpy(), args.word_length, args.n_int, args.n_frac)
                     layer.running_mean.data = low_precision_tensor
-                if hasattr(layer, 'running_var') and layer.running_var is not None:
-                    # print(name, layer, 'running_var')
-                    low_precision_tensor = quantize_tensor(layer.running_var.clone(), args.fixed_int, args.fixed_fractional, is_denominator=True)
-                    layer.running_var.data = low_precision_tensor
+                # if hasattr(layer, 'running_var') and layer.running_var is not None:
+                #     # print(name, layer, 'running_var')
+                #     low_precision_tensor = quantize_tensor(layer.running_var.numpy(), args.word_length, args.n_int, args.n_frac, is_denominator=True)
+                #     layer.running_var.data = low_precision_tensor
                 continue
 
     if not distributed:

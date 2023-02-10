@@ -11,29 +11,46 @@ from mmcv.utils import _BatchNorm
 from ...utils import get_root_logger
 from ..builder import BACKBONES
 
+from fxpmath import Fxp
 import numpy as np
 import torch
 
-quant_fmaps = False
-def quant_fmap(fmap, int_bits=8, fractional_bits=8):
-    int_range_limit = 2**(int_bits + fractional_bits) // 2
+quant_fmaps = True
+if quant_fmaps:
+    global_word_length = 11
+    global_n_int = 5
+    global_n_frac = 6
+
+def quant_fmap(fmap, word_length=None, n_int=None, n_frac=None, signed=True):
+    # Another convertion method    
+    # fp_converter = Fxp(fmap.detach().cpu().numpy(), signed=True, n_word=global_word_length, n_frac=global_n_frac, n_int=global_n_int)
+    # fp_tensor = fp_converter.get_val(dtype=fmap.detach().cpu().numpy().dtype)
+    # fp_tensor = torch.from_numpy(fp_tensor).to(torch.device('cuda:0'))
+
+    precision = 2**(-global_n_frac)
+    rev_precision = 2**global_n_frac
+    if signed:
+        int_range = 2**(global_word_length -1)
+        lower_val = - 2**(global_n_int -1)
+    else:
+        int_range = 2**(global_word_length)
+        lower_val = 0
+    upper_val = int_range - precision
+
     fmap_shape = list(fmap.shape)
 
-    shift_left = torch.ones(fmap_shape, dtype=torch.float32, device=torch.device('cuda:0'))*(2**fractional_bits)
-    shift_right = torch.ones(fmap_shape, dtype=torch.float32, device=torch.device('cuda:0'))*(2**(-fractional_bits))
-
+    shift_left = torch.ones(fmap_shape, dtype=torch.float32, device=torch.device('cuda:0')) * rev_precision
     fp_data = fmap * shift_left
 
-    fp_data = torch.round(fp_data)
+    fp_data = torch.trunc(fp_data)
 
-    if fp_data.min() < -int_range_limit or fp_data.max() > (int_range_limit - 1):
-        fp_data = fp_data.where(fp_data>=float(-int_range_limit),torch.tensor(float(-int_range_limit)).to(torch.device('cuda:0')))
-        fp_data = fp_data.where(fp_data<=float(int_range_limit - 1),torch.tensor(float(int_range_limit - 1)).to(torch.device('cuda:0')))
+    fp_data = torch.clip(fp_data, min=-int_range, max=int_range-1)
 
-    fp = fp_data * shift_right
+    shift_right = torch.ones(fmap_shape, dtype=torch.float32, device=torch.device('cuda:0')) * precision
+    fp_data = fp_data * shift_right
 
-    del shift_left, shift_right, fp_data
-    return fp
+    del shift_left, shift_right
+    return fp_data
 
 class SEModule(nn.Module):
 
