@@ -9,11 +9,11 @@ from fxpmath import Fxp
 import numpy as np
 import torch
 
-quant_fmaps = True
+quant_fmaps = False
 if quant_fmaps:
-    global_word_length = 11
-    global_n_int = 5
-    global_n_frac = 6
+    global_word_length = 16
+    global_n_int = 7
+    global_n_frac = 9
 
 def quant_fmap(fmap, word_length=None, n_int=None, n_frac=None, signed=True):
     # Another convertion method    
