@@ -169,7 +169,7 @@ def mmit_mean_average_precision(scores, labels):
             sample.
 
     Returns:
-        np.float: The MMIT style mean average precision.
+        np.float64: The MMIT style mean average precision.
     """
     results = []
     for score, label in zip(scores, labels):
@@ -189,7 +189,7 @@ def mean_average_precision(scores, labels):
             sample.
 
     Returns:
-        np.float: The mean average precision.
+        np.float64: The mean average precision.
     """
     results = []
     scores = np.stack(scores).T
@@ -409,7 +409,7 @@ def average_recall_at_avg_proposals(ground_truth,
             true_positives_temporal_iou = score >= temporal_iou
             # Get number of proposals as a percentage of total retrieved.
             pcn_proposals = np.minimum(
-                (score.shape[1] * pcn_list).astype(np.int32), score.shape[1])
+                (score.shape[1] * pcn_list).astype(np.int64), score.shape[1])
 
             for j, num_retrieved_proposals in enumerate(pcn_proposals):
                 # Compute the number of matches

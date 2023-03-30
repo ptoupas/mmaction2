@@ -123,7 +123,7 @@ class UniformSampleFrames:
         start_index = results['start_index']
         inds = inds + start_index
 
-        results['frame_inds'] = inds.astype(np.int32)
+        results['frame_inds'] = inds.astype(np.int64)
         results['clip_len'] = self.clip_len
         results['frame_interval'] = None
         results['num_clips'] = self.num_clips
@@ -659,7 +659,11 @@ class PaddingWithLoop:
         inds = np.arange(start, start + self.clip_len)
         inds = np.mod(inds, num_frames)
 
+<<<<<<< HEAD
         results['frame_inds'] = inds.astype(np.int32)
+=======
+        results['frame_inds'] = inds.astype(np.int64)
+>>>>>>> 80506a0dcad2fbc1b2d9ccdc37120a5173f155d0
         results['clip_len'] = self.clip_len
         results['frame_interval'] = None
         results['num_clips'] = self.num_clips
