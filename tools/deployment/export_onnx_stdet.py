@@ -1,6 +1,8 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import argparse
 
+import onnx
+from onnxsim import simplify
 import onnxruntime
 import torch
 import torch.nn as nn
@@ -155,7 +157,7 @@ def main():
         args.output_file,
         input_names=['input_tensor', 'rois'],
         output_names=['cls_score'],
-        export_params=False,
+        export_params=True,
         do_constant_folding=True,
         verbose=True,
         opset_version=11,
@@ -174,6 +176,12 @@ def main():
         })
 
     print(f'Successfully export the onnx file to {args.output_file}')
+
+    model = onnx.load(args.output_file)
+    model_opt, _ = simplify(model)
+    onnx.helper.strip_doc_string(model_opt)
+    model_opt = onnx.shape_inference.infer_shapes(model_opt)
+    onnx.save(model_opt, f"{args.output_file}_opt.onnx")
 
     # Test exported file
     session = onnxruntime.InferenceSession(args.output_file)
