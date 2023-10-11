@@ -1,6 +1,6 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import List, Optional, Tuple, Union
 
 import mmengine
 import numpy as np
@@ -9,6 +9,7 @@ import torch.nn as nn
 from mmengine.dataset import Compose, pseudo_collate
 from mmengine.registry import init_default_scope
 from mmengine.runner import load_checkpoint
+from mmengine.structures import InstanceData
 from mmengine.utils import track_iter_progress
 
 from mmaction.registry import MODELS
@@ -39,7 +40,8 @@ def init_recognizer(config: Union[str, Path, mmengine.Config],
 
     init_default_scope(config.get('default_scope', 'mmaction'))
 
-    if config.model.backbone.get('pretrained', None):
+    if hasattr(config.model, 'backbone') and config.model.backbone.get(
+            'pretrained', None):
         config.model.backbone.pretrained = None
     model = MODELS.build(config.model)
 
@@ -72,6 +74,7 @@ def inference_recognizer(model: nn.Module,
 
     if test_pipeline is None:
         cfg = model.cfg
+        init_default_scope(cfg.get('default_scope', 'mmaction'))
         test_pipeline_cfg = cfg.test_pipeline
         test_pipeline = Compose(test_pipeline_cfg)
 
@@ -99,7 +102,64 @@ def inference_recognizer(model: nn.Module,
     return result
 
 
-def detection_inference(det_config: Union[str, Path, mmengine.Config],
+def inference_skeleton(model: nn.Module,
+                       pose_results: List[dict],
+                       img_shape: Tuple[int],
+                       test_pipeline: Optional[Compose] = None
+                       ) -> ActionDataSample:
+    """Inference a pose results with the skeleton recognizer.
+
+    Args:
+        model (nn.Module): The loaded recognizer.
+        pose_results (List[dict]): The pose estimation results dictionary
+            (the results of `pose_inference`)
+        img_shape (Tuple[int]): The original image shape used for inference
+            skeleton recognizer.
+        test_pipeline (:obj:`Compose`, optional): The test pipeline.
+            If not specified, the test pipeline in the config will be
+            used. Defaults to None.
+
+    Returns:
+        :obj:`ActionDataSample`: The inference results. Specifically, the
+        predicted scores are saved at ``result.pred_scores.item``.
+    """
+    if test_pipeline is None:
+        cfg = model.cfg
+        init_default_scope(cfg.get('default_scope', 'mmaction'))
+        test_pipeline_cfg = cfg.test_pipeline
+        test_pipeline = Compose(test_pipeline_cfg)
+
+    h, w = img_shape
+    num_keypoint = pose_results[0]['keypoints'].shape[1]
+    num_frame = len(pose_results)
+    num_person = max([len(x['keypoints']) for x in pose_results])
+    fake_anno = dict(
+        frame_dict='',
+        label=-1,
+        img_shape=(h, w),
+        origin_shape=(h, w),
+        start_index=0,
+        modality='Pose',
+        total_frames=num_frame)
+
+    keypoint = np.zeros((num_frame, num_person, num_keypoint, 2),
+                        dtype=np.float16)
+    keypoint_score = np.zeros((num_frame, num_person, num_keypoint),
+                              dtype=np.float16)
+
+    for f_idx, frm_pose in enumerate(pose_results):
+        frm_num_persons = frm_pose['keypoints'].shape[0]
+        for p_idx in range(frm_num_persons):
+            keypoint[f_idx, p_idx] = frm_pose['keypoints'][p_idx]
+            keypoint_score[f_idx, p_idx] = frm_pose['keypoint_scores'][p_idx]
+
+    fake_anno['keypoint'] = keypoint.transpose((1, 0, 2, 3))
+    fake_anno['keypoint_score'] = keypoint_score.transpose((1, 0, 2))
+    return inference_recognizer(model, fake_anno, test_pipeline)
+
+
+def detection_inference(det_config: Union[str, Path, mmengine.Config,
+                                          nn.Module],
                         det_checkpoint: str,
                         frame_paths: List[str],
                         det_score_thr: float = 0.9,
@@ -109,8 +169,10 @@ def detection_inference(det_config: Union[str, Path, mmengine.Config],
     """Detect human boxes given frame paths.
 
     Args:
-        det_config (Union[str, :obj:`Path`, :obj:`mmengine.Config`]): Config
-            file path, :obj:`Path` or the config object.
+        det_config (Union[str, :obj:`Path`, :obj:`mmengine.Config`,
+            :obj:`torch.nn.Module`]):
+            Det config file path or Detection model object. It can be
+            a :obj:`Path`, a config object, or a module object.
         det_checkpoint: Checkpoint path/url.
         frame_paths (List[str]): The paths of frames to do detection inference.
         det_score_thr (float): The threshold of human detection score.
@@ -133,9 +195,11 @@ def detection_inference(det_config: Union[str, Path, mmengine.Config],
         raise ImportError('Failed to import `inference_detector` and '
                           '`init_detector` from `mmdet.apis`. These apis are '
                           'required in this inference api! ')
-
-    model = init_detector(
-        config=det_config, checkpoint=det_checkpoint, device=device)
+    if isinstance(det_config, nn.Module):
+        model = det_config
+    else:
+        model = init_detector(
+            config=det_config, checkpoint=det_checkpoint, device=device)
 
     results = []
     data_samples = []
@@ -160,7 +224,7 @@ def detection_inference(det_config: Union[str, Path, mmengine.Config],
     return results, data_samples
 
 
-def pose_inference(pose_config: Union[str, Path, mmengine.Config],
+def pose_inference(pose_config: Union[str, Path, mmengine.Config, nn.Module],
                    pose_checkpoint: str,
                    frame_paths: List[str],
                    det_results: List[np.ndarray],
@@ -168,8 +232,10 @@ def pose_inference(pose_config: Union[str, Path, mmengine.Config],
     """Perform Top-Down pose estimation.
 
     Args:
-        pose_config (Union[str, :obj:`Path`, :obj:`mmengine.Config`]): Config
-            file path, :obj:`Path` or the config object.
+        pose_config (Union[str, :obj:`Path`, :obj:`mmengine.Config`,
+            :obj:`torch.nn.Module`]): Pose config file path or
+            pose model object. It can be a :obj:`Path`, a config object,
+            or a module object.
         pose_checkpoint: Checkpoint path/url.
         frame_paths (List[str]): The paths of frames to do pose inference.
         det_results (List[np.ndarray]): List of detected human boxes.
@@ -188,8 +254,10 @@ def pose_inference(pose_config: Union[str, Path, mmengine.Config],
         raise ImportError('Failed to import `inference_topdown` and '
                           '`init_model` from `mmpose.apis`. These apis '
                           'are required in this inference api! ')
-
-    model = init_model(pose_config, pose_checkpoint, device)
+    if isinstance(pose_config, nn.Module):
+        model = pose_config
+    else:
+        model = init_model(pose_config, pose_checkpoint, device)
 
     results = []
     data_samples = []
@@ -199,6 +267,17 @@ def pose_inference(pose_config: Union[str, Path, mmengine.Config],
             = inference_topdown(model, f, d[..., :4], bbox_format='xyxy')
         pose_data_sample = merge_data_samples(pose_data_samples)
         pose_data_sample.dataset_meta = model.dataset_meta
+        # make fake pred_instances
+        if not hasattr(pose_data_sample, 'pred_instances'):
+            num_keypoints = model.dataset_meta['num_keypoints']
+            pred_instances_data = dict(
+                keypoints=np.empty(shape=(0, num_keypoints, 2)),
+                keypoints_scores=np.empty(shape=(0, 17), dtype=np.float32),
+                bboxes=np.empty(shape=(0, 4), dtype=np.float32),
+                bbox_scores=np.empty(shape=(0), dtype=np.float32))
+            pose_data_sample.pred_instances = InstanceData(
+                **pred_instances_data)
+
         poses = pose_data_sample.pred_instances.to_dict()
         results.append(poses)
         data_samples.append(pose_data_sample)
