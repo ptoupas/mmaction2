@@ -46,6 +46,7 @@ def main():
     cfg = Config.fromfile(args.config)
     init_default_scope(cfg.get('default_scope', 'mmaction'))
     model = MODELS.build(cfg.model)
+    model = model.to("cuda")
     model.eval()
 
     if hasattr(model, 'extract_feat'):
